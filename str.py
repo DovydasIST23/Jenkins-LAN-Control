@@ -10,43 +10,41 @@ def list_nodes(project):
             f"| Console: {node.console} | Node ID: {node.node_id}"
         )
 
-def start_node(connector, node):
+def start_node(node):
     """Start a node if it is stopped."""
     if node.status != "started":
-        connector.start_node(project_id=node.project_id, node_id=node.node_id)
+        node.start()
         print(f"Starting node: {node.name}")
     else:
         print(f"Node already running: {node.name}")
 
-def stop_node(connector, node):
+def stop_node(node):
     """Stop a node if it is running."""
     if node.status == "started":
-        connector.stop_node(project_id=node.project_id, node_id=node.node_id)
+        node.stop()
         print(f"Stopping node: {node.name}")
     else:
         print(f"Node already stopped: {node.name}")
 
-def start_nodes_by_type(connector, project, node_type_filter):
-    """Start only nodes of a specific type (e.g., 'vpcs', 'qemu', 'dynamips')."""
+def start_nodes_by_type(project, node_type_filter):
+    """Start only nodes of a specific type."""
     print(f"\n=== Starting nodes of type: {node_type_filter} ===")
     for node in project.nodes:
         if node.node_type == node_type_filter:
-            start_node(connector, node)
+            start_node(node)
 
-def stop_nodes_by_type(connector, project, node_type_filter):
+def stop_nodes_by_type(project, node_type_filter):
     """Stop only nodes of a specific type."""
     print(f"\n=== Stopping nodes of type: {node_type_filter} ===")
     for node in project.nodes:
         if node.node_type == node_type_filter:
-            stop_node(connector, node)
+            stop_node(node)
 
 def main():
-    # Retrieve GNS3 server URL from environment variables or use a default value
     gns3_server_url = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:80")
     project_name = "a"
 
     try:
-        # Connect to GNS3 server
         connector = Gns3Connector(url=gns3_server_url)
         print(f"Connecting to GNS3 server at {gns3_server_url}...")
 
@@ -54,26 +52,16 @@ def main():
         project.get()
         print(f"Connected to project '{project_name}'.\n")
 
-        # Show all node info
+        # Show node info
         list_nodes(project)
 
-        # Example actions ---------------------------------------------
+        # Start all VPCS nodes (fix works here!)
+        start_nodes_by_type(project, "vpcs")
 
-        # Start one specific node
-        # my_node = project.get_node(name="R1")
-        # start_node(connector, my_node)
-
-        # Start all VPCS nodes
-        start_nodes_by_type(connector, project, "vpcs")
-
-        # Stop all QEMU nodes
-        # stop_nodes_by_type(connector, project, "qemu")
-
-        # Start all nodes
-        # connector.start_all_nodes(project_id=project.project_id)
-
-        # Stop all nodes
-        # connector.stop_all_nodes(project_id=project.project_id)
+        # Examples:
+        # stop_nodes_by_type(project, "qemu")
+        # node = project.get_node(name="R1")
+        # start_node(node)
 
     except Exception as e:
         print(f"Error: {e}")
