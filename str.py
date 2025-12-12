@@ -24,5 +24,8 @@ def main():
         print(f"Error: {e}")
         print("Failed to connect to the GNS3 server or retrieve the project.")
 
-if __name__ == "__main__":
-    main()
+        # if __name__ == "__main__":
+        #  main()
+
+for node in project.nodes:
+    print(f"Node: {node.name} -- Node Type: {node.node_type} -- Status: {node.status}")
