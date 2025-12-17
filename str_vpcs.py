@@ -3,7 +3,7 @@ import time
 import socket
 from gns3fy import Gns3Connector, Project
 
-GATEWAY_IP = "192.168.56.1"
+GATEWAY_IP = "192.168.1.1"
 
 
 # -------------------------------
@@ -14,8 +14,10 @@ def list_nodes(project):
     print("\n=== Node List ===")
     for node in project.nodes:
         print(
-            f"Name: {node.name} | Type: {node.node_type} | "
-            f"Status: {node.status} | Console: {node.console}"
+            f"Name: {node.name} | "
+            f"Type: {node.node_type} | "
+            f"Status: {node.status} | "
+            f"Console: {node.console}"
         )
 
 
@@ -37,13 +39,14 @@ def start_nodes_by_type(project, node_type):
 # VPCS socket automation
 # -------------------------------
 
-def run_vpcs_commands(node, commands):
-    host = node.console_host
+def run_vpcs_commands(node, commands, gns3_host):
     port = node.console
-
     output = b""
 
-    with socket.create_connection((host, port), timeout=5) as s:
+    if port is None:
+        raise RuntimeError(f"{node.name} has no console port")
+
+    with socket.create_connection((gns3_host, port), timeout=10) as s:
         s.settimeout(2)
         time.sleep(1)
 
@@ -63,7 +66,7 @@ def run_vpcs_commands(node, commands):
     return output.decode("ascii", errors="ignore")
 
 
-def configure_vpcs(node, index):
+def configure_vpcs(node, index, gns3_host):
     commands = [
         f"set pcname PC{index}",
         "ip dhcp",
@@ -73,12 +76,12 @@ def configure_vpcs(node, index):
     ]
 
     print(f"\nConfiguring {node.name} -> PC{index}")
-    output = run_vpcs_commands(node, commands)
+    output = run_vpcs_commands(node, commands, gns3_host)
 
     if "bytes from" in output.lower():
-        print(f" {node.name}: Gateway reachable")
+        print(f"{node.name}: Gateway reachable")
     else:
-        print(f" {node.name}: Gateway NOT reachable")
+        print(f"{node.name}: Gateway NOT reachable")
 
 
 # -------------------------------
@@ -93,8 +96,11 @@ def main():
 
     connector = Gns3Connector(url=gns3_server_url)
     project = Project(name=project_name, connector=connector)
+
     project.get()
     project.open()
+
+    gns3_host = connector.host
 
     print(f"Connected to project '{project_name}'")
 
@@ -103,19 +109,17 @@ def main():
     start_nodes_by_type(project, "vpcs")
 
     vpcs_nodes = [n for n in project.nodes if n.node_type == "vpcs"]
-
-    print(f"\n Found {len(vpcs_nodes)} VPCS nodes")
+    print(f"\nFound {len(vpcs_nodes)} VPCS nodes")
 
     if not vpcs_nodes:
         print("No VPCS nodes found.")
         return
 
     for i, node in enumerate(vpcs_nodes, start=1):
-        configure_vpcs(node, i)
+        configure_vpcs(node, i, gns3_host)
 
-    print("\n VPCS automation completed successfully!")
+    print("\nVPCS automation completed successfully!")
 
 
 if __name__ == "__main__":
     main()
-
