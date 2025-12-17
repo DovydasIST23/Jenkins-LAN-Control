@@ -1,70 +1,66 @@
 import os
 import time
-import telnetlib
+import socket
 from gns3fy import Gns3Connector, Project
 
-GATEWAY_IP = "192.168.1.1"
+GATEWAY_IP = "192.168.56.1"
 
 
 # -------------------------------
-# Node Management Utilities
+# Node utilities
 # -------------------------------
 
 def list_nodes(project):
-    """Print all nodes with useful information."""
     print("\n=== Node List ===")
     for node in project.nodes:
         print(
-            f"Name: {node.name} | Type: {node.node_type} | Status: {node.status} "
-            f"| Console: {node.console} | Node ID: {node.node_id}"
+            f"Name: {node.name} | Type: {node.node_type} | "
+            f"Status: {node.status} | Console: {node.console}"
         )
 
 
 def start_node(node):
-    """Start a node if it is stopped."""
     if node.status != "started":
         node.start()
         print(f"Starting node: {node.name}")
         time.sleep(1)
-    else:
-        print(f"Node already running: {node.name}")
 
 
-def stop_node(node):
-    """Stop a node if it is running."""
-    if node.status == "started":
-        node.stop()
-        print(f"Stopping node: {node.name}")
-    else:
-        print(f"Node already stopped: {node.name}")
-
-
-def start_nodes_by_type(project, node_type_filter):
-    """Start only nodes of a specific type."""
-    print(f"\n=== Starting nodes of type: {node_type_filter} ===")
+def start_nodes_by_type(project, node_type):
+    print(f"\n=== Starting {node_type} nodes ===")
     for node in project.nodes:
-        if node.node_type == node_type_filter:
+        if node.node_type == node_type:
             start_node(node)
 
 
 # -------------------------------
-# VPCS Automation (Added Code)
+# VPCS socket automation
 # -------------------------------
 
 def run_vpcs_commands(node, commands):
     host = node.console_host
     port = node.console
 
-    tn = telnetlib.Telnet(host, port, timeout=5)
-    time.sleep(1)
+    output = b""
 
-    for cmd in commands:
-        tn.write(cmd.encode("ascii") + b"\n")
-        time.sleep(0.4)
+    with socket.create_connection((host, port), timeout=5) as s:
+        s.settimeout(2)
+        time.sleep(1)
 
-    output = tn.read_very_eager().decode("ascii", errors="ignore")
-    tn.close()
-    return output
+        for cmd in commands:
+            s.sendall(cmd.encode("ascii") + b"\n")
+            time.sleep(0.4)
+
+        try:
+            while True:
+                data = s.recv(4096)
+                if not data:
+                    break
+                output += data
+        except socket.timeout:
+            pass
+
+    return output.decode("ascii", errors="ignore")
 
 
 def configure_vpcs(node, index):
@@ -86,45 +82,37 @@ def configure_vpcs(node, index):
 
 
 # -------------------------------
-# Main Orchestration
+# Main
 # -------------------------------
 
 def main():
-    gns3_server_url = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:80")
+    gns3_server_url = os.environ.get(
+        "GNS3_SERVER_URL", "http://192.168.56.102:80"
+    )
     project_name = "a"
 
-    try:
-        print(f"Connecting to GNS3 server at {gns3_server_url}...")
-        connector = Gns3Connector(url=gns3_server_url)
-        project = Project(name=project_name, connector=connector)
-        project.get()
+    connector = Gns3Connector(url=gns3_server_url)
+    project = Project(name=project_name, connector=connector)
+    project.get()
 
-        print(f"Connected to project '{project_name}'")
+    print(f"Connected to project '{project_name}'")
 
-        # Show all nodes
-        list_nodes(project)
+    list_nodes(project)
 
-        # Start all VPCS nodes
-        start_nodes_by_type(project, "vpcs")
+    start_nodes_by_type(project, "vpcs")
 
-        # Collect VPCS nodes
-        vpcs_nodes = [n for n in project.nodes if n.node_type == "vpcs"]
+    vpcs_nodes = [n for n in project.nodes if n.node_type == "vpcs"]
 
-        print(f"\n📊 Found {len(vpcs_nodes)} VPCS nodes")
+    print(f"\n📊 Found {len(vpcs_nodes)} VPCS nodes")
 
-        if not vpcs_nodes:
-            print("No VPCS nodes found. Exiting.")
-            return
+    if not vpcs_nodes:
+        print("No VPCS nodes found.")
+        return
 
-        # Configure each VPCS
-        for i, node in enumerate(vpcs_nodes, start=1):
-            configure_vpcs(node, i)
+    for i, node in enumerate(vpcs_nodes, start=1):
+        configure_vpcs(node, i)
 
-        print("\n🎉 VPCS DHCP + Routing automation completed!")
-
-    except Exception as e:
-        print(f"Error: {e}")
-        print("Failed to connect to the GNS3 server or retrieve project.")
+    print("\n🎉 VPCS automation completed successfully!")
 
 
 if __name__ == "__main__":
