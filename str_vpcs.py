@@ -72,7 +72,7 @@ def configure_vpcs(node, index):
         f"ping {GATEWAY_IP} -c 2"
     ]
 
-    print(f"\nConfiguring {node.name} → PC{index}")
+    print(f"\nConfiguring {node.name} -> PC{index}")
     output = run_vpcs_commands(node, commands)
 
     if "bytes from" in output.lower():
@@ -118,3 +118,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
