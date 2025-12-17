@@ -76,9 +76,9 @@ def configure_vpcs(node, index):
     output = run_vpcs_commands(node, commands)
 
     if "bytes from" in output.lower():
-        print(f"✅ {node.name}: Gateway reachable")
+        print(f" {node.name}: Gateway reachable")
     else:
-        print(f"⚠️ {node.name}: Gateway NOT reachable")
+        print(f" {node.name}: Gateway NOT reachable")
 
 
 # -------------------------------
@@ -95,7 +95,7 @@ def main():
     project = Project(name=project_name, connector=connector)
     project.get()
     project.open()
-    
+
     print(f"Connected to project '{project_name}'")
 
     list_nodes(project)
@@ -104,7 +104,7 @@ def main():
 
     vpcs_nodes = [n for n in project.nodes if n.node_type == "vpcs"]
 
-    print(f"\n📊 Found {len(vpcs_nodes)} VPCS nodes")
+    print(f"\n Found {len(vpcs_nodes)} VPCS nodes")
 
     if not vpcs_nodes:
         print("No VPCS nodes found.")
@@ -113,9 +113,8 @@ def main():
     for i, node in enumerate(vpcs_nodes, start=1):
         configure_vpcs(node, i)
 
-    print("\n🎉 VPCS automation completed successfully!")
+    print("\n VPCS automation completed successfully!")
 
 
 if __name__ == "__main__":
     main()
-
