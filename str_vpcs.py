@@ -94,7 +94,8 @@ def main():
     connector = Gns3Connector(url=gns3_server_url)
     project = Project(name=project_name, connector=connector)
     project.get()
-
+    project.open()
+    
     print(f"Connected to project '{project_name}'")
 
     list_nodes(project)
@@ -117,3 +118,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
