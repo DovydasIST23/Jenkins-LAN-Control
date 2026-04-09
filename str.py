@@ -57,7 +57,7 @@ def main():
 
         # Start all VPCS nodes (fix works here!)
         start_nodes_by_type(project, "vpcs")
-        start_nodes_by_type(project, "mikrotik") 
+        start_nodes_by_type(project, "mikrotik-1") 
         
         # Examples:
         # stop_nodes_by_type(project, "qemu")
