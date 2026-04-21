@@ -124,7 +124,7 @@ def main():
         # Then configure PCs
         configure_vpcs(project)
 
-        print("\n✅ IP CONFIGURATION COMPLETE")
+        print("\n IP CONFIGURATION COMPLETE")
 
     except Exception as e:
         print(f"[ERROR] {e}")
