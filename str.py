@@ -41,7 +41,7 @@ def stop_nodes_by_type(project, node_type_filter):
             stop_node(node)
 
 def main():
-    gns3_server_url = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:80")
+    gns3_server_url = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:3080")
     project_name = "a"
 
     try:
