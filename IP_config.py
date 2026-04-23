@@ -1,6 +1,6 @@
 import os
 import time
-import telnetlib
+import paramiko
 from gns3fy import Gns3Connector, Project
 
 GNS3_URL = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:3080")
@@ -8,16 +8,18 @@ PROJECT_NAME = "a"
 
 
 # -------------------------
-# Telnet helper
+# SSH helper
 # -------------------------
 def send_command(node, command, wait=1.5):
     try:
-        tn = telnetlib.Telnet(node.console_host, node.console, timeout=5)
-        time.sleep(1)
-        tn.write(command.encode("ascii") + b"\n")
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(node.console_host, port=node.console, username="admin", password="admin")
+
+        stdin, stdout, stderr = ssh.exec_command(command)
         time.sleep(wait)
-        output = tn.read_very_eager().decode("ascii")
-        tn.close()
+        output = stdout.read().decode("ascii")
+        ssh.close()
         return output
     except Exception as e:
         return f"ERROR: {e}"
