@@ -1,101 +1,114 @@
 import os
 import time
-import requests
+import paramiko
 from gns3fy import Gns3Connector, Project
 
-GNS3_URL = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:3080")
+# -------------------------
+# CONFIG
+# -------------------------
+GNS3_URL = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:80")
 PROJECT_NAME = "a"
 
+GNS3_VM_HOST = "192.168.56.102"
+GNS3_VM_USER = "gns3"
+GNS3_VM_PASS = "gns3"
+
 
 # -------------------------
-# Alpine Linux IP config
+# IP PLAN
 # -------------------------
-NODE_CONFIG = {
-    # Main network
-    "PC1": ("10.0.0.10", "10.0.0.1"),
-    "PC2": ("10.0.0.11", "10.0.0.1"),
-    "PC3": ("10.0.0.12", "10.0.0.1"),
-    "PC4": ("10.0.0.13", "10.0.0.1"),
-    "PC5": ("10.0.0.14", "10.0.0.1"),
-    "PC6": ("10.0.0.15", "10.0.0.1"),
-    "PC7": ("10.0.0.16", "10.0.0.1"),
+def generate_ip_config():
+    config = {}
 
-    # Support network
-    "PC8": ("10.1.0.10", "10.1.0.1"),
-    "PC9": ("10.1.0.11", "10.1.0.1"),
+    for i in range(1, 8):
+        config[f"AlpineLinux-{i}"] = (f"10.0.0.{9+i}", "10.0.0.1")
 
-    # Admin network
-    "IT": ("10.2.0.10", "10.2.0.1"),
-}
+    config["AlpineLinux-8"] = ("10.1.0.10", "10.1.0.1")
+    config["AlpineLinux-9"] = ("10.1.0.11", "10.1.0.1")
+    config["AlpineLinux-10"] = ("10.2.0.10", "10.2.0.1")
+
+    return config
 
 
-def configure_alpine(project):
-    print("\n[INFO] Configuring Alpine Docker nodes...")
+# -------------------------
+# SSH CONNECT
+# -------------------------
+def ssh_connect():
+    print("[INFO] Connecting via SSH to GNS3 VM...")
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(GNS3_VM_HOST, username=GNS3_VM_USER, password=GNS3_VM_PASS)
+    return ssh
 
-    for name, (ip, gw) in NODE_CONFIG.items():
-        try:
-            node = project.get_node(name=name)
 
-            startup_script = f"""
-#!/bin/sh
-ip addr add {ip}/24 dev eth0
-ip link set eth0 up
-ip route add default via {gw}
+# -------------------------
+# EXEC SSH COMMAND
+# -------------------------
+def ssh_exec(ssh, cmd):
+    stdin, stdout, stderr = ssh.exec_command(cmd)
+    output = stdout.read().decode()
+    error = stderr.read().decode()
 
-# keep container alive
-while true; do sleep 3600; done
+    if output:
+        print(output.strip())
+    if error:
+        print("[ERR]", error.strip())
+
+
+# -------------------------
+# Configure Alpine via Docker
+# -------------------------
+def configure_alpine_ssh(project, ssh):
+    print("\n[INFO] Configuring Alpine containers via SSH...")
+
+    config = generate_ip_config()
+
+    for node in project.nodes:
+        if node.node_type != "docker":
+            continue
+
+        if node.name not in config:
+            continue
+
+        ip, gw = config[node.name]
+
+        # Container name in GNS3 = node name (usually)
+        cmd = f"""
+docker exec {node.name} sh -c "
+ip addr add {ip}/24 dev eth0;
+ip link set eth0 up;
+ip route add default via {gw};
+"
 """
 
-            api_url = f"{GNS3_URL}/projects/{project.project_id}/nodes/{node.node_id}"
-
-            payload = {
-                "startup_script": startup_script
-            }
-
-            response = requests.put(api_url, json=payload)
-
-            if response.status_code in [200, 201]:
-                print(f"[OK] {name} -> {ip}")
-            else:
-                print(f"[WARN] {name}: {response.text}")
-
-        except Exception as e:
-            print(f"[ERROR] {name}: {e}")
+        print(f"[CFG] {node.name} -> {ip}")
+        ssh_exec(ssh, cmd)
 
 
 # -------------------------
-# MikroTik config
+# Configure MikroTik via console
 # -------------------------
-def configure_mikrotik(project):
-    print("\n[INFO] Configuring MikroTik router...")
+def configure_mikrotik_ssh(ssh):
+    print("\n[INFO] Configuring MikroTik via SSH console...")
 
-    try:
-        node = project.get_node(name="mikrotik-1")
+    # Find MikroTik screen session
+    cmd_find = "screen -ls | grep mikrotik || true"
+    ssh_exec(ssh, cmd_find)
 
-        startup_script = """/ip address add address=10.0.0.1/24 interface=ether1
-/ip address add address=10.1.0.1/24 interface=ether2
-/ip address add address=10.2.0.1/24 interface=ether3
-"""
+    # Send commands (basic example)
+    mikrotik_cmds = [
+        "/ip address add address=10.0.0.1/24 interface=ether1",
+        "/ip address add address=10.1.0.1/24 interface=ether2",
+        "/ip address add address=10.2.0.1/24 interface=ether3",
+    ]
 
-        api_url = f"{GNS3_URL}/projects/{project.project_id}/nodes/{node.node_id}"
-
-        payload = {
-            "startup_config": startup_script
-        }
-
-        response = requests.put(api_url, json=payload)
-
-        if response.status_code in [200, 201]:
-            print("[OK] MikroTik configured")
-        else:
-            print(f"[WARN] MikroTik: {response.text}")
-
-    except Exception as e:
-        print(f"[ERROR] MikroTik: {e}")
+    for cmd in mikrotik_cmds:
+        send_cmd = f'screen -S mikrotik-1 -X stuff "{cmd}\\n"'
+        ssh_exec(ssh, send_cmd)
 
 
 # -------------------------
-# Start nodes
+# Start nodes (API)
 # -------------------------
 def start_nodes(project):
     print("\n[INFO] Starting nodes...")
@@ -105,7 +118,6 @@ def start_nodes(project):
             print(f"Starting {node.name}")
             node.start()
 
-    # wait until started
     for _ in range(60):
         project.get_nodes()
         if all(n.status == "started" for n in project.nodes):
@@ -122,26 +134,28 @@ def start_nodes(project):
 # -------------------------
 def main():
     try:
-        print(f"[INFO] Connecting to {GNS3_URL}")
+        print(f"[INFO] Connecting to GNS3 API {GNS3_URL}")
         connector = Gns3Connector(url=GNS3_URL)
 
         project = Project(name=PROJECT_NAME, connector=connector)
         project.get()
         project.get_nodes()
 
-        print(f"[OK] Project: {project.name}")
-
-        # Apply configs BEFORE starting
-        configure_mikrotik(project)
-        configure_alpine(project)
-
-        # Small delay (important for GNS3 API consistency)
-        time.sleep(3)
+        print(f"[OK] Project loaded: {project.name}")
 
         if not start_nodes(project):
             return
 
-        print("\n[SUCCESS] NETWORK CONFIGURED")
+        time.sleep(5)  # allow containers to boot
+
+        ssh = ssh_connect()
+
+        configure_alpine_ssh(project, ssh)
+        configure_mikrotik_ssh(ssh)
+
+        ssh.close()
+
+        print("\n[SUCCESS] FULL NETWORK CONFIGURED")
 
     except Exception as e:
         print(f"[ERROR] {e}")
