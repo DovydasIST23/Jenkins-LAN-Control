@@ -8,10 +8,98 @@ PROJECT_NAME = "a"
 
 
 # -------------------------
+# Alpine Linux IP config
+# -------------------------
+NODE_CONFIG = {
+    # Main network
+    "PC1": ("10.0.0.10", "10.0.0.1"),
+    "PC2": ("10.0.0.11", "10.0.0.1"),
+    "PC3": ("10.0.0.12", "10.0.0.1"),
+    "PC4": ("10.0.0.13", "10.0.0.1"),
+    "PC5": ("10.0.0.14", "10.0.0.1"),
+    "PC6": ("10.0.0.15", "10.0.0.1"),
+    "PC7": ("10.0.0.16", "10.0.0.1"),
+
+    # Support network
+    "PC8": ("10.1.0.10", "10.1.0.1"),
+    "PC9": ("10.1.0.11", "10.1.0.1"),
+
+    # Admin network
+    "IT": ("10.2.0.10", "10.2.0.1"),
+}
+
+
+def configure_alpine(project):
+    print("\n[INFO] Configuring Alpine Docker nodes...")
+
+    for name, (ip, gw) in NODE_CONFIG.items():
+        try:
+            node = project.get_node(name=name)
+
+            startup_script = f"""
+#!/bin/sh
+ip addr add {ip}/24 dev eth0
+ip link set eth0 up
+ip route add default via {gw}
+
+# keep container alive
+while true; do sleep 3600; done
+"""
+
+            api_url = f"{GNS3_URL}/projects/{project.project_id}/nodes/{node.node_id}"
+
+            payload = {
+                "startup_script": startup_script
+            }
+
+            response = requests.put(api_url, json=payload)
+
+            if response.status_code in [200, 201]:
+                print(f"[OK] {name} -> {ip}")
+            else:
+                print(f"[WARN] {name}: {response.text}")
+
+        except Exception as e:
+            print(f"[ERROR] {name}: {e}")
+
+
+# -------------------------
+# MikroTik config
+# -------------------------
+def configure_mikrotik(project):
+    print("\n[INFO] Configuring MikroTik router...")
+
+    try:
+        node = project.get_node(name="mikrotik-1")
+
+        startup_script = """/ip address add address=10.0.0.1/24 interface=ether1
+/ip address add address=10.1.0.1/24 interface=ether2
+/ip address add address=10.2.0.1/24 interface=ether3
+"""
+
+        api_url = f"{GNS3_URL}/projects/{project.project_id}/nodes/{node.node_id}"
+
+        payload = {
+            "startup_config": startup_script
+        }
+
+        response = requests.put(api_url, json=payload)
+
+        if response.status_code in [200, 201]:
+            print("[OK] MikroTik configured")
+        else:
+            print(f"[WARN] MikroTik: {response.text}")
+
+    except Exception as e:
+        print(f"[ERROR] MikroTik: {e}")
+
+
+# -------------------------
 # Start nodes
 # -------------------------
 def start_nodes(project):
-    print("[INFO] Starting nodes...")
+    print("\n[INFO] Starting nodes...")
+
     for node in project.nodes:
         if node.status != "started":
             print(f"Starting {node.name}")
@@ -30,96 +118,7 @@ def start_nodes(project):
 
 
 # -------------------------
-# VPCS IP configuration
-# -------------------------
-VPCS_CONFIG = {
-    # Main network (10.0.0.0/24)
-    "PC1": ("10.0.0.10", "10.0.0.1"),
-    "PC2": ("10.0.0.11", "10.0.0.1"),
-    "PC3": ("10.0.0.12", "10.0.0.1"),
-    "PC4": ("10.0.0.13", "10.0.0.1"),
-    "PC5": ("10.0.0.14", "10.0.0.1"),
-    "PC6": ("10.0.0.15", "10.0.0.1"),
-    "PC7": ("10.0.0.16", "10.0.0.1"),
-
-    # Support network (10.1.0.0/24)
-    "PC8": ("10.1.0.10", "10.1.0.1"),
-    "PC9": ("10.1.0.11", "10.1.0.1"),
-
-    # Admin network (10.2.0.0/24)
-    "IT": ("10.2.0.10", "10.2.0.1"),
-}
-
-
-def configure_vpcs_via_api(project, gns3_url):
-    print("\n[INFO] Configuring VPCS nodes via GNS3 API...")
-
-    for name, (ip, gw) in VPCS_CONFIG.items():
-        try:
-            node = project.get_node(name=name)
-            
-            # Debug: print node ID and project ID
-            print(f"[DEBUG] {name} - Node ID: {node.node_id}, Project ID: {project.project_id}")
-            
-            # Create startup script for VPCS
-            startup_script = f"ip {ip} {gw}\n"
-            
-            # Update node via GNS3 REST API directly
-            api_url = f"{gns3_url}/projects/{project.project_id}/nodes/{node.node_id}"
-            
-            print(f"[DEBUG] API URL: {api_url}")
-            
-            payload = {
-                "startup_config": startup_script
-            }
-            
-            response = requests.put(api_url, json=payload)
-            
-            if response.status_code in [200, 201]:
-                print(f"[OK] {name} configured -> {ip} gw {gw}")
-            else:
-                print(f"[WARN] {name} HTTP {response.status_code}: {response.text}")
-            
-        except Exception as e:
-            print(f"[WARN] Could not configure {name}: {e}")
-
-
-def configure_mikrotik_via_api(project, gns3_url):
-    print("\n[INFO] Configuring MikroTik via GNS3 API...")
-
-    try:
-        node = project.get_node(name="mikrotik-1")
-
-        # Debug
-        print(f"[DEBUG] MikroTik - Node ID: {node.node_id}, Project ID: {project.project_id}")
-
-        # MikroTik startup commands
-        startup_script = """/ip address add address=10.0.0.1/24 interface=ether1
-/ip address add address=10.1.0.1/24 interface=ether2
-/ip address add address=10.2.0.1/24 interface=ether3
-"""
-
-        api_url = f"{gns3_url}/projects/{project.project_id}/nodes/{node.node_id}"
-        
-        print(f"[DEBUG] API URL: {api_url}")
-        
-        payload = {
-            "startup_config": startup_script
-        }
-        
-        response = requests.put(api_url, json=payload)
-        
-        if response.status_code in [200, 201]:
-            print("[OK] MikroTik configuration applied")
-        else:
-            print(f"[WARN] MikroTik HTTP {response.status_code}: {response.text}")
-
-    except Exception as e:
-        print(f"[ERROR] MikroTik config failed: {e}")
-
-
-# -------------------------
-# Main
+# MAIN
 # -------------------------
 def main():
     try:
@@ -130,18 +129,19 @@ def main():
         project.get()
         project.get_nodes()
 
-        print(f"[DEBUG] Project name: {project.name}, Project ID: {project.project_id}")
+        print(f"[OK] Project: {project.name}")
 
-        # Configure BEFORE starting
-        print("\n[INFO] Applying startup configurations...")
-        configure_mikrotik_via_api(project, GNS3_URL)
-        configure_vpcs_via_api(project, GNS3_URL)
+        # Apply configs BEFORE starting
+        configure_mikrotik(project)
+        configure_alpine(project)
 
-        # Now start nodes with configurations applied
+        # Small delay (important for GNS3 API consistency)
+        time.sleep(3)
+
         if not start_nodes(project):
             return
 
-        print("\nIP CONFIGURATION COMPLETE")
+        print("\n[SUCCESS] NETWORK CONFIGURED")
 
     except Exception as e:
         print(f"[ERROR] {e}")
