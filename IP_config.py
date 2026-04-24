@@ -1,5 +1,6 @@
 import os
 import time
+import requests
 from gns3fy import Gns3Connector, Project
 
 GNS3_URL = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:3080")
@@ -50,45 +51,58 @@ VPCS_CONFIG = {
 }
 
 
-def configure_vpcs(project):
-    print("\n[INFO] Configuring VPCS nodes via startup configs...")
+def configure_vpcs_via_api(project, gns3_url):
+    print("\n[INFO] Configuring VPCS nodes via GNS3 API...")
 
     for name, (ip, gw) in VPCS_CONFIG.items():
         try:
             node = project.get_node(name=name)
             
-            # Create startup config for VPCS node
-            startup_config = f"ip {ip} {gw}\n"
+            # Create startup script for VPCS
+            startup_script = f"ip {ip} {gw}\n"
             
-            # Update node startup config
-            node.startup_config = startup_config
-            node.update()
+            # Update node via GNS3 REST API directly
+            api_url = f"{gns3_url}/projects/{project.project_id}/nodes/{node.node_id}"
             
-            print(f"[OK] {name} configured -> {ip} gw {gw}")
+            payload = {
+                "startup_config": startup_script
+            }
+            
+            response = requests.put(api_url, json=payload)
+            
+            if response.status_code in [200, 201]:
+                print(f"[OK] {name} configured -> {ip} gw {gw}")
+            else:
+                print(f"[WARN] {name} HTTP {response.status_code}: {response.text}")
             
         except Exception as e:
             print(f"[WARN] Could not configure {name}: {e}")
 
 
-# -------------------------
-# MikroTik configuration
-# -------------------------
-def configure_mikrotik(project):
-    print("\n[INFO] Configuring MikroTik via startup config...")
+def configure_mikrotik_via_api(project, gns3_url):
+    print("\n[INFO] Configuring MikroTik via GNS3 API...")
 
     try:
         node = project.get_node(name="mikrotik-1")
 
         # MikroTik startup commands
-        startup_config = """/ip address add address=10.0.0.1/24 interface=ether1
+        startup_script = """/ip address add address=10.0.0.1/24 interface=ether1
 /ip address add address=10.1.0.1/24 interface=ether2
 /ip address add address=10.2.0.1/24 interface=ether3
 """
 
-        node.startup_config = startup_config
-        node.update()
+        api_url = f"{gns3_url}/projects/{project.project_id}/nodes/{node.node_id}"
         
-        print("[OK] MikroTik configuration applied")
+        payload = {
+            "startup_config": startup_script
+        }
+        
+        response = requests.put(api_url, json=payload)
+        
+        if response.status_code in [200, 201]:
+            print("[OK] MikroTik configuration applied")
+        else:
+            print(f"[WARN] MikroTik HTTP {response.status_code}: {response.text}")
 
     except Exception as e:
         print(f"[ERROR] MikroTik config failed: {e}")
@@ -106,10 +120,10 @@ def main():
         project.get()
         project.get_nodes()
 
-        # Configure BEFORE starting (startup configs apply on boot)
+        # Configure BEFORE starting
         print("\n[INFO] Applying startup configurations...")
-        configure_mikrotik(project)
-        configure_vpcs(project)
+        configure_mikrotik_via_api(project, GNS3_URL)
+        configure_vpcs_via_api(project, GNS3_URL)
 
         # Now start nodes with configurations applied
         if not start_nodes(project):
