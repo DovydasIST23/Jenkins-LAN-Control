@@ -54,8 +54,15 @@ def ssh_exec(ssh, cmd):
 # -------------------------
 # FIXED Alpine config
 # -------------------------
+def get_container_name(ssh, node_id):
+    cmd = f'docker ps --filter "label=com.gns3.node.id={node_id}" --format "{{{{.Names}}}}"'
+    stdin, stdout, stderr = ssh.exec_command(cmd)
+    name = stdout.read().decode().strip()
+    return name
+
+
 def configure_alpine(project, ssh):
-    print("\n[INFO] Configuring Alpine containers...")
+    print("\n[INFO] Configuring Alpine containers (correct mapping)...")
 
     config = generate_ip_config()
 
@@ -68,8 +75,12 @@ def configure_alpine(project, ssh):
 
         ip, gw = config[node.name]
 
-        # 🔥 FIX: use real container name
-        container_name = f"gns3-{node.node_id}"
+        # 🔥 get REAL container name dynamically
+        container_name = get_container_name(ssh, node.node_id)
+
+        if not container_name:
+            print(f"[ERROR] No container found for {node.name}")
+            continue
 
         cmd = f"""
 docker exec {container_name} sh -c "
@@ -81,11 +92,21 @@ ip route add default via {gw};
 
         print(f"[CFG] {node.name} ({container_name}) -> {ip}")
         ssh_exec(ssh, cmd)
-
-
 # -------------------------
 # FIXED MikroTik config
 # -------------------------
+
+if not start_nodes(project):
+    return
+
+time.sleep(10)  # containers boot
+ssh = ssh_connect()
+
+configure_alpine(project, ssh)
+
+time.sleep(10)  # MikroTik boot
+configure_mikrotik(ssh)
+
 def configure_mikrotik(ssh):
     print("\n[INFO] Configuring MikroTik...")
 
