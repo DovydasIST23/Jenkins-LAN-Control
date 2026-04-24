@@ -3,7 +3,7 @@ import time
 import requests
 from gns3fy import Gns3Connector, Project
 
-GNS3_URL = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:80")
+GNS3_URL = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:3080")
 PROJECT_NAME = "a"
 
 
@@ -58,11 +58,16 @@ def configure_vpcs_via_api(project, gns3_url):
         try:
             node = project.get_node(name=name)
             
+            # Debug: print node ID and project ID
+            print(f"[DEBUG] {name} - Node ID: {node.node_id}, Project ID: {project.project_id}")
+            
             # Create startup script for VPCS
             startup_script = f"ip {ip} {gw}\n"
             
             # Update node via GNS3 REST API directly
             api_url = f"{gns3_url}/projects/{project.project_id}/nodes/{node.node_id}"
+            
+            print(f"[DEBUG] API URL: {api_url}")
             
             payload = {
                 "startup_config": startup_script
@@ -85,6 +90,9 @@ def configure_mikrotik_via_api(project, gns3_url):
     try:
         node = project.get_node(name="mikrotik-1")
 
+        # Debug
+        print(f"[DEBUG] MikroTik - Node ID: {node.node_id}, Project ID: {project.project_id}")
+
         # MikroTik startup commands
         startup_script = """/ip address add address=10.0.0.1/24 interface=ether1
 /ip address add address=10.1.0.1/24 interface=ether2
@@ -92,6 +100,8 @@ def configure_mikrotik_via_api(project, gns3_url):
 """
 
         api_url = f"{gns3_url}/projects/{project.project_id}/nodes/{node.node_id}"
+        
+        print(f"[DEBUG] API URL: {api_url}")
         
         payload = {
             "startup_config": startup_script
@@ -119,6 +129,8 @@ def main():
         project = Project(name=PROJECT_NAME, connector=connector)
         project.get()
         project.get_nodes()
+
+        print(f"[DEBUG] Project name: {project.name}, Project ID: {project.project_id}")
 
         # Configure BEFORE starting
         print("\n[INFO] Applying startup configurations...")
