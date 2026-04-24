@@ -3,7 +3,7 @@ import time
 import requests
 from gns3fy import Gns3Connector, Project
 
-GNS3_URL = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:3080")
+GNS3_URL = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:80")
 PROJECT_NAME = "a"
 
 
