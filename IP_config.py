@@ -34,6 +34,7 @@ def generate_ip_config():
 # SSH
 # -------------------------
 def ssh_connect():
+    print("[INFO] Connecting to GNS3 VM via SSH...")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(GNS3_VM_HOST, username=GNS3_VM_USER, password=GNS3_VM_PASS)
@@ -52,17 +53,19 @@ def ssh_exec(ssh, cmd):
 
 
 # -------------------------
-# FIXED Alpine config
+# Docker container lookup
 # -------------------------
 def get_container_name(ssh, node_id):
     cmd = f'docker ps --filter "label=com.gns3.node.id={node_id}" --format "{{{{.Names}}}}"'
     stdin, stdout, stderr = ssh.exec_command(cmd)
-    name = stdout.read().decode().strip()
-    return name
+    return stdout.read().decode().strip()
 
 
+# -------------------------
+# Configure Alpine
+# -------------------------
 def configure_alpine(project, ssh):
-    print("\n[INFO] Configuring Alpine containers (correct mapping)...")
+    print("\n[INFO] Configuring Alpine containers...")
 
     config = generate_ip_config()
 
@@ -71,11 +74,11 @@ def configure_alpine(project, ssh):
             continue
 
         if node.name not in config:
+            print(f"[SKIP] {node.name}")
             continue
 
         ip, gw = config[node.name]
 
-        # 🔥 get REAL container name dynamically
         container_name = get_container_name(ssh, node.node_id)
 
         if not container_name:
@@ -92,25 +95,14 @@ ip route add default via {gw};
 
         print(f"[CFG] {node.name} ({container_name}) -> {ip}")
         ssh_exec(ssh, cmd)
+
+
 # -------------------------
-# FIXED MikroTik config
+# Configure MikroTik
 # -------------------------
-
-if not start_nodes(project):
-    return
-
-time.sleep(10)  # containers boot
-ssh = ssh_connect()
-
-configure_alpine(project, ssh)
-
-time.sleep(10)  # MikroTik boot
-configure_mikrotik(ssh)
-
 def configure_mikrotik(ssh):
     print("\n[INFO] Configuring MikroTik...")
 
-    # find real screen session
     stdin, stdout, stderr = ssh.exec_command("screen -ls")
     screens = stdout.read().decode()
 
@@ -137,8 +129,8 @@ def configure_mikrotik(ssh):
     ]
 
     for cmd in commands:
-        send = f'screen -S {session_name} -X stuff "{cmd}\\n"'
-        ssh_exec(ssh, send)
+        send_cmd = f'screen -S {session_name} -X stuff "{cmd}\\n"'
+        ssh_exec(ssh, send_cmd)
 
 
 # -------------------------
@@ -175,16 +167,25 @@ def main():
         project.get()
         project.get_nodes()
 
-        print(f"[OK] Project: {project.name}")
+        print(f"[OK] Project loaded: {project.name}")
 
+        # Start nodes
         if not start_nodes(project):
             return
 
-        time.sleep(5)
+        # Wait for containers to fully boot
+        time.sleep(10)
 
+        # SSH into GNS3 VM
         ssh = ssh_connect()
 
+        # Configure Alpine containers
         configure_alpine(project, ssh)
+
+        # Wait for MikroTik to boot properly
+        time.sleep(10)
+
+        # Configure MikroTik
         configure_mikrotik(ssh)
 
         ssh.close()
