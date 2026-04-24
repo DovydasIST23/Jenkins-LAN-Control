@@ -31,35 +31,31 @@ def generate_ip_config():
 
 
 # -------------------------
-# SSH CONNECT
+# SSH
 # -------------------------
 def ssh_connect():
-    print("[INFO] Connecting via SSH to GNS3 VM...")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(GNS3_VM_HOST, username=GNS3_VM_USER, password=GNS3_VM_PASS)
     return ssh
 
 
-# -------------------------
-# EXEC SSH COMMAND
-# -------------------------
 def ssh_exec(ssh, cmd):
     stdin, stdout, stderr = ssh.exec_command(cmd)
-    output = stdout.read().decode()
-    error = stderr.read().decode()
+    out = stdout.read().decode()
+    err = stderr.read().decode()
 
-    if output:
-        print(output.strip())
-    if error:
-        print("[ERR]", error.strip())
+    if out:
+        print(out.strip())
+    if err:
+        print("[ERR]", err.strip())
 
 
 # -------------------------
-# Configure Alpine via Docker
+# FIXED Alpine config
 # -------------------------
-def configure_alpine_ssh(project, ssh):
-    print("\n[INFO] Configuring Alpine containers via SSH...")
+def configure_alpine(project, ssh):
+    print("\n[INFO] Configuring Alpine containers...")
 
     config = generate_ip_config()
 
@@ -72,43 +68,60 @@ def configure_alpine_ssh(project, ssh):
 
         ip, gw = config[node.name]
 
-        # Container name in GNS3 = node name (usually)
+        # 🔥 FIX: use real container name
+        container_name = f"gns3-{node.node_id}"
+
         cmd = f"""
-docker exec {node.name} sh -c "
+docker exec {container_name} sh -c "
 ip addr add {ip}/24 dev eth0;
 ip link set eth0 up;
 ip route add default via {gw};
 "
 """
 
-        print(f"[CFG] {node.name} -> {ip}")
+        print(f"[CFG] {node.name} ({container_name}) -> {ip}")
         ssh_exec(ssh, cmd)
 
 
 # -------------------------
-# Configure MikroTik via console
+# FIXED MikroTik config
 # -------------------------
-def configure_mikrotik_ssh(ssh):
-    print("\n[INFO] Configuring MikroTik via SSH console...")
+def configure_mikrotik(ssh):
+    print("\n[INFO] Configuring MikroTik...")
 
-    # Find MikroTik screen session
-    cmd_find = "screen -ls | grep mikrotik || true"
-    ssh_exec(ssh, cmd_find)
+    # find real screen session
+    stdin, stdout, stderr = ssh.exec_command("screen -ls")
+    screens = stdout.read().decode()
 
-    # Send commands (basic example)
-    mikrotik_cmds = [
+    print("[DEBUG] Available screens:")
+    print(screens)
+
+    session_name = None
+
+    for line in screens.splitlines():
+        if "mikrotik" in line.lower():
+            session_name = line.strip().split(".")[-1]
+            break
+
+    if not session_name:
+        print("[ERROR] MikroTik screen not found")
+        return
+
+    print(f"[OK] Found MikroTik session: {session_name}")
+
+    commands = [
         "/ip address add address=10.0.0.1/24 interface=ether1",
         "/ip address add address=10.1.0.1/24 interface=ether2",
         "/ip address add address=10.2.0.1/24 interface=ether3",
     ]
 
-    for cmd in mikrotik_cmds:
-        send_cmd = f'screen -S mikrotik-1 -X stuff "{cmd}\\n"'
-        ssh_exec(ssh, send_cmd)
+    for cmd in commands:
+        send = f'screen -S {session_name} -X stuff "{cmd}\\n"'
+        ssh_exec(ssh, send)
 
 
 # -------------------------
-# Start nodes (API)
+# Start nodes
 # -------------------------
 def start_nodes(project):
     print("\n[INFO] Starting nodes...")
@@ -141,21 +154,21 @@ def main():
         project.get()
         project.get_nodes()
 
-        print(f"[OK] Project loaded: {project.name}")
+        print(f"[OK] Project: {project.name}")
 
         if not start_nodes(project):
             return
 
-        time.sleep(5)  # allow containers to boot
+        time.sleep(5)
 
         ssh = ssh_connect()
 
-        configure_alpine_ssh(project, ssh)
-        configure_mikrotik_ssh(ssh)
+        configure_alpine(project, ssh)
+        configure_mikrotik(ssh)
 
         ssh.close()
 
-        print("\n[SUCCESS] FULL NETWORK CONFIGURED")
+        print("\n[SUCCESS] NETWORK FULLY CONFIGURED")
 
     except Exception as e:
         print(f"[ERROR] {e}")
