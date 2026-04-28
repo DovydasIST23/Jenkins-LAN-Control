@@ -17,13 +17,15 @@ GNS3_VM_PASS = "gns3"
 def generate_ip_config():
     config = {}
 
-    for i in range(1, 8):
+    for i in range(2, 8):
         config[f"AlpineLinux-{i}"] = (f"10.0.0.{9+i}", "10.0.0.1")
 
+    config["AlpineLinux-1"] = ("11.0.0.1", "11.0.0.1")
     config["AlpineLinux-8"] = ("10.1.0.10", "10.1.0.1")
     config["AlpineLinux-9"] = ("10.1.0.11", "10.1.0.1")
     config["AlpineLinux-10"] = ("10.2.0.10", "10.2.0.1")
-
+    
+    
     return config
 
 
