@@ -141,13 +141,32 @@ def configure_ovs_switches(project, ssh, containers):
 
         cmd = f"""
 docker exec {container} sh -c "
-echo 'Resetting OVS...'
-ovs-vsctl --if-exists del-br br0
 
-echo 'Creating bridge...'
+echo 'Starting OVS services manually...'
+
+# Create DB if missing
+mkdir -p /var/run/openvswitch
+mkdir -p /etc/openvswitch
+
+ovsdb-tool create /etc/openvswitch/conf.db \
+    /usr/share/openvswitch/vswitch.ovsschema 2>/dev/null || true
+
+# Start OVS DB
+ovsdb-server --remote=punix:/var/run/openvswitch/db.sock \
+             --remote=db:Open_vSwitch,Open_vSwitch,manager_options \
+             --pidfile --detach || true
+
+# Init DB
+ovs-vsctl --no-wait init
+
+# Start vswitch daemon
+ovs-vswitchd --pidfile --detach || true
+
+echo 'Resetting bridge...'
+ovs-vsctl --if-exists del-br br0
 ovs-vsctl add-br br0
 
-echo 'Adding ports...'
+echo 'Adding interfaces...'
 for iface in $(ls /sys/class/net | grep eth); do
     ovs-vsctl add-port br0 $iface
     ip link set $iface up
@@ -155,12 +174,11 @@ done
 
 ip link set br0 up
 
-echo 'OVS CONFIG DONE'
+echo 'OVS READY'
 "
 """
         print(f"[CFG] OVS Switch {node.name}")
         ssh_exec(ssh, cmd)
-
 
 # -------------------------
 # Start nodes
