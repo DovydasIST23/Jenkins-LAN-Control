@@ -50,20 +50,13 @@ def ssh_exec(ssh, cmd):
 
 
 # -------------------------
-# Get container mapping (NAME -> container)
+# Get container list
 # -------------------------
-def get_container_map(ssh):
-    cmd = "docker ps --format '{{.Names}}'"
-    stdin, stdout, stderr = ssh.exec_command(cmd)
-    names = stdout.read().decode().strip().splitlines()
-
-    mapping = {}
-    for c in names:
-        # GNS3 container names usually contain node name
-        for node_name in c.split("-"):
-            mapping[c] = c
-
-    return names
+def get_all_containers(ssh):
+    stdin, stdout, stderr = ssh.exec_command(
+        "docker ps --format '{{.Names}}'"
+    )
+    return stdout.read().decode().strip().splitlines()
 
 
 # -------------------------
@@ -77,13 +70,31 @@ def find_container(containers, node_name):
 
 
 # -------------------------
+# Wait for containers (fix for "stuck installing")
+# -------------------------
+def wait_for_containers(ssh, timeout=60):
+    print("\n[INFO] Waiting for containers to be ready...")
+
+    for i in range(timeout):
+        containers = get_all_containers(ssh)
+
+        if containers:
+            print(f"[OK] {len(containers)} containers detected")
+            return containers
+
+        time.sleep(1)
+
+    print("[ERROR] No containers found")
+    return []
+
+
+# -------------------------
 # Configure Alpine
 # -------------------------
-def configure_alpine(project, ssh):
+def configure_alpine(project, ssh, containers):
     print("\n[INFO] Configuring Alpine containers...")
 
     config = generate_ip_config()
-    containers = get_container_map(ssh)
 
     for node in project.nodes:
         if node.node_type != "docker":
@@ -94,7 +105,7 @@ def configure_alpine(project, ssh):
 
         container = find_container(containers, node.name)
         if not container:
-            print(f"[ERROR] Container not found for {node.name}")
+            print(f"[WARN] No container for {node.name}")
             continue
 
         ip, gw = config[node.name]
@@ -112,13 +123,12 @@ ip route add default via {gw};
 
 
 # -------------------------
-# Configure OVS Switches
+# Configure OVS switches
 # -------------------------
-def configure_ovs_switches(project, ssh):
-    print("\n[INFO] Configuring OVS switches...")
+def configure_ovs_switches(project, ssh, containers):
+    print("\n[INFO] Configuring Open vSwitch nodes...")
 
     switch_names = ["Main1", "Support", "Admin"]
-    containers = get_container_map(ssh)
 
     for node in project.nodes:
         if node.name not in switch_names:
@@ -126,24 +136,26 @@ def configure_ovs_switches(project, ssh):
 
         container = find_container(containers, node.name)
         if not container:
-            print(f"[ERROR] Container not found for {node.name}")
+            print(f"[WARN] No container for {node.name}")
             continue
 
         cmd = f"""
 docker exec {container} sh -c "
-# Clean old config
+echo 'Resetting OVS...'
 ovs-vsctl --if-exists del-br br0
 
-# Create bridge
+echo 'Creating bridge...'
 ovs-vsctl add-br br0
 
-# Add all eth interfaces
+echo 'Adding ports...'
 for iface in $(ls /sys/class/net | grep eth); do
     ovs-vsctl add-port br0 $iface
     ip link set $iface up
 done
 
 ip link set br0 up
+
+echo 'OVS CONFIG DONE'
 "
 """
         print(f"[CFG] OVS Switch {node.name}")
@@ -161,6 +173,7 @@ def start_nodes(project):
             print(f"Starting {node.name}")
             node.start()
 
+    # wait until all started
     for _ in range(60):
         project.get_nodes()
         if all(n.status == "started" for n in project.nodes):
@@ -189,12 +202,16 @@ def main():
         if not start_nodes(project):
             return
 
-        time.sleep(10)
+        time.sleep(5)
 
         ssh = ssh_connect()
 
-        configure_alpine(project, ssh)
-        configure_ovs_switches(project, ssh)
+        containers = wait_for_containers(ssh)
+        if not containers:
+            return
+
+        configure_alpine(project, ssh, containers)
+        configure_ovs_switches(project, ssh, containers)
 
         ssh.close()
 
