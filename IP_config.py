@@ -4,6 +4,32 @@ from gns3fy import Gns3Connector, Project
 
 GNS3_URL = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:80")
 PROJECT_NAME = "a"
+# -------------------------
+# MAIN
+# -------------------------
+def main():
+    try:
+        print(f"[INFO] Connecting to GNS3 API {GNS3_URL}")
+        connector = Gns3Connector(url=GNS3_URL)
+        project = Project(name=PROJECT_NAME, connector=connector)
+        project.get()
+        project.get_nodes()
+
+        print(f"[OK] Project loaded: {project.name}")
+
+        if not start_nodes(project):
+            print("[WARN] Some nodes are not started, but proceeding...")
+
+        # Trumpas palaukimas stabilumui
+        time.sleep(2)
+
+        configure_alpine(project)
+        configure_ovs_switches(project)
+
+        print("\n[SUCCESS] NETWORK FULLY CONFIGURED VIA API")
+
+    except Exception as e:
+        print(f"[ERROR] {e}")
 
 # -------------------------
 # IP PLAN
@@ -77,32 +103,6 @@ def start_nodes(project):
         time.sleep(1)
     return False
 
-# -------------------------
-# MAIN
-# -------------------------
-def main():
-    try:
-        print(f"[INFO] Connecting to GNS3 API {GNS3_URL}")
-        connector = Gns3Connector(url=GNS3_URL)
-        project = Project(name=PROJECT_NAME, connector=connector)
-        project.get()
-        project.get_nodes()
-
-        print(f"[OK] Project loaded: {project.name}")
-
-        if not start_nodes(project):
-            print("[WARN] Some nodes are not started, but proceeding...")
-
-        # Trumpas palaukimas stabilumui
-        time.sleep(2)
-
-        configure_alpine(project)
-        configure_ovs_switches(project)
-
-        print("\n[SUCCESS] NETWORK FULLY CONFIGURED VIA API")
-
-    except Exception as e:
-        print(f"[ERROR] {e}")
 
 if __name__ == "__main__":
     main()
