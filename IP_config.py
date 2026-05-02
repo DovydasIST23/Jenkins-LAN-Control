@@ -31,23 +31,24 @@ def generate_ip_config():
 # -------------------------
 # SSH
 # -------------------------
-def ssh_connect():
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(GNS3_VM_HOST, username=GNS3_VM_USER, password=GNS3_VM_PASS)
-    return ssh
-
-
 def ssh_exec(ssh, cmd):
     stdin, stdout, stderr = ssh.exec_command(cmd)
-    out = stdout.read().decode()
-    err = stderr.read().decode()
 
-    if out:
-        print(out.strip())
-    if err:
-        print("[ERR]", err.strip())
+    # IMPORTANT: avoid blocking
+    stdout.channel.settimeout(10)
+    stderr.channel.settimeout(10)
 
+    try:
+        out = stdout.read().decode()
+        err = stderr.read().decode()
+
+        if out:
+            print(out.strip())
+        if err:
+            print("[ERR]", err.strip())
+
+    except Exception as e:
+        print(f"[WARN] SSH timeout or partial output: {e}")
 
 # -------------------------
 # Get container list
@@ -127,7 +128,6 @@ ip route add default via {gw};
 # -------------------------
 def configure_ovs_switches(project, ssh, containers):
     print("\n[INFO] Configuring Open vSwitch nodes...")
-
     switch_names = ["Main1", "Support", "Admin"]
 
     for node in project.nodes:
@@ -139,41 +139,25 @@ def configure_ovs_switches(project, ssh, containers):
             print(f"[WARN] No container for {node.name}")
             continue
 
+        # Sutrumpinta komanda: patikriname ar veikia ovs-vsctl ir tik tada konfigūruojame
         cmd = f"""
 docker exec {container} sh -c "
+# Palaukiame kol OVS DB bus paruošta (iki 10 sek)
+for i in $(seq 1 10); do
+    ovs-vsctl show > /dev/null 2>&1 && break
+    sleep 1
+done
 
-echo 'Starting OVS services manually...'
-
-# Create DB if missing
-mkdir -p /var/run/openvswitch
-mkdir -p /etc/openvswitch
-
-ovsdb-tool create /etc/openvswitch/conf.db \
-    /usr/share/openvswitch/vswitch.ovsschema 2>/dev/null || true
-
-# Start OVS DB
-ovsdb-server --remote=punix:/var/run/openvswitch/db.sock \
-             --remote=db:Open_vSwitch,Open_vSwitch,manager_options \
-             --pidfile --detach || true
-
-# Init DB
-ovs-vsctl --no-wait init
-
-# Start vswitch daemon
-ovs-vswitchd --pidfile --detach || true
-
-echo 'Resetting bridge...'
+echo 'Configuring bridge br0...'
 ovs-vsctl --if-exists del-br br0
 ovs-vsctl add-br br0
 
-echo 'Adding interfaces...'
 for iface in $(ls /sys/class/net | grep eth); do
-    ovs-vsctl add-port br0 $iface
-    ip link set $iface up
+    ovs-vsctl --may-exist add-port br0 \\$iface
+    ip link set \\$iface up
 done
 
 ip link set br0 up
-
 echo 'OVS READY'
 "
 """
