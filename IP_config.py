@@ -12,6 +12,16 @@ GNS3_VM_PASS = "gns3"
 
 
 # -------------------------
+# SSH CONNECTION
+# -------------------------
+def ssh_connect():
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(GNS3_VM_HOST, username=GNS3_VM_USER, password=GNS3_VM_PASS)
+    return ssh
+
+
+# -------------------------
 # IP PLAN
 # -------------------------
 def generate_ip_config():
