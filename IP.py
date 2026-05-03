@@ -17,24 +17,17 @@ GNS3_VM_PASS = "gns3"
 # =========================
 
 def api_post(path, data):
-    def api_post(path, data):
+    """Saugi API užklausa: pataisytas lygiavimas ir klaidų valdymas."""
     url = f"{GNS3_URL}{path}"
-    response = requests.post(url, json=data)
-    
-    # Patikriname, ar atsakymas nėra tuščias prieš bandant skaityti JSON
-    if response.status_code == 200 and not response.text.strip():
-        return {"status": "success"}
-        
     try:
+        response = requests.post(url, json=data)
+        # GNS3 Docker execute dažnai grąžina sėkmės kodą 200, bet tuščią tekstą
+        if response.status_code == 200 and not response.text.strip():
+            return {"status": "success"}
         return response.json()
     except Exception:
-        return {"status": "executed", "output": response.text}
-        
-        if not response.text.strip():
-            return {"status": "ok"}
-        return response.json()
-    except Exception:
-        return {"status": "executed", "output": response.text}
+        # Jei atsakymas ne JSON arba tuščias, grąžiname vykdymo statusą
+        return {"status": "executed"}
 
 def run_docker_cmd(project_id, node_id, cmd):
     return api_post(f"/v2/projects/{project_id}/nodes/{node_id}/execute", {"command": cmd})
@@ -87,14 +80,20 @@ def configure_alpine(project, node):
 def main():
     connector = Gns3Connector(url=GNS3_URL)
     project = Project(name=PROJECT_NAME, connector=connector)
-    project.get()
-    project.get_nodes()
+    
+    try:
+        project.get()
+        project.get_nodes()
+    except Exception as e:
+        print(f"[ERROR] Nepavyko rasti projekto '{PROJECT_NAME}': {e}")
+        return
 
     print("[INFO] Paleidžiami mazgai...")
     for node in project.nodes:
         if node.status != "started":
             node.start()
     
+    print("[INFO] Laukiama 15s, kol OS pasikraus...")
     time.sleep(15)
 
     for node in project.nodes:
@@ -105,7 +104,7 @@ def main():
             run_docker_cmd(project.project_id, node.node_id, "ip link set br0 up")
 
     mikrotik_ssh_config()
-    print("\n[SUCCESS] Procesas baigtas.")
+    print("\n[SUCCESS] Tinklo konfigūravimas baigtas.")
 
 if __name__ == "__main__":
     main()
