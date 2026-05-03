@@ -6,6 +6,12 @@ from gns3fy import Gns3Connector, Project
 
 GNS3_URL = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:80")
 PROJECT_NAME = "a"
+# =========================
+# SHH Info
+# =========================
+GNS3_VM_HOST = "192.168.56.102"
+GNS3_VM_USER = "gns3"
+GNS3_VM_PASS = "gns3"
 
 # =========================
 # Helpers
@@ -48,7 +54,7 @@ def mikrotik_ssh_config(ip):
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-    ssh.connect(ip, username="admin", password="")
+    ssh.connect(GNS3_VM_HOST, username=GNS3_VM_USER, password=GNS3_VM_PASS)
 
     commands = [
         "/ip address add address=192.168.10.1/24 interface=ether1",
