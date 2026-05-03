@@ -17,10 +17,19 @@ GNS3_VM_PASS = "gns3"
 # =========================
 
 def api_post(path, data):
-    """Sutvarkyta funkcija: neleidžia JSONDecodeError sustabdyti skripto."""
+    def api_post(path, data):
     url = f"{GNS3_URL}{path}"
+    response = requests.post(url, json=data)
+    
+    # Patikriname, ar atsakymas nėra tuščias prieš bandant skaityti JSON
+    if response.status_code == 200 and not response.text.strip():
+        return {"status": "success"}
+        
     try:
-        response = requests.post(url, json=data)
+        return response.json()
+    except Exception:
+        return {"status": "executed", "output": response.text}
+        
         if not response.text.strip():
             return {"status": "ok"}
         return response.json()
