@@ -1,39 +1,47 @@
-import paramiko
+import requests
 import time
 
-def configure_mikrotik(ip, user, password, commands):
+# GNS3 Serverio nustatymai
+GNS3_URL = "http://192.168.56"
+PROJECT_NAME = "Tavo_Projekto_Vardas" # Įrašyk tikslų pavadinimą
+
+def get_ids():
+    # Gauname projekto ID
+    p_resp = requests.get(f"{GNS3_URL}/projects")
+    p_id = [p['project_id'] for p in p_resp.json() if p['name'] == PROJECT_NAME][0]
+    
+    # Gauname mikrotik-1 ID
+    n_resp = requests.get(f"{GNS3_URL}/projects/{p_id}/nodes")
+    n_id = [n['node_id'] for n in n_resp.json() if "mikrotik-1" in n['name']][0]
+    
+    return p_id, n_id
+
+def send_console_command(p_id, n_id, command):
+    # Siunčiame tekstą tiesiai į įrenginio konsolę
+    url = f"{GNS3_URL}/projects/{p_id}/nodes/{n_id}/console"
+    # Pridedame \r\n, kad emuliuotume "Enter" paspaudimą
+    requests.post(url, data=f"{command}\r\n".encode('ascii'))
+    print(f"Išsiųsta: {command}")
+    time.sleep(1)
+
+def run_config():
     try:
-        # Sukuriamas SSH klientas
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        
-        print(f"Jungiamasi prie {ip}...")
-        client.connect(ip, username=user, password=password, port=22, timeout=10)
-        
-        # Vykdomos komandos
+        p_id, n_id = get_ids()
+        print(f"Rastas Projektas: {p_id}, Mazgas: {n_id}")
+
+        # Mikrotik konfigūravimas per konsolę (be slaptažodžio, jei naujas)
+        commands = [
+            "/system identity set name=Jenkins-Router",
+            "/ip address add address=192.168.1.1/24 interface=ether2",
+            "/ip address add address=192.168.2.1/24 interface=ether3"
+        ]
+
         for cmd in commands:
-            print(f"Vykdoma: {cmd}")
-            stdin, stdout, stderr = client.exec_command(cmd)
-            time.sleep(1)
-            
-        print("Konfigūracija baigta sėkmingai.")
-        client.close()
+            send_console_command(p_id, n_id, cmd)
+
+        print("Konfigūracija baigta!")
     except Exception as e:
         print(f"Klaida: {e}")
 
 if __name__ == "__main__":
-    # Tavo GNS3 VM IP (jei naudojamas 'NAT' tinklas mazgui) 
-    # Arba tiesioginis mazgo IP, jei jis pasiekiamas iš PC
-    NODE_IP = "192.168.56.102" 
-    
-    # Mikrotik numatytieji duomenys
-    USER = "admin"
-    PASS = "" 
-
-    # Pavyzdinės komandos (pvz., pakeisti pavadinimą ar nustatyti IP)
-    config_commands = [
-        "/system identity set name=Jenkins-Controlled-Router",
-        "/ip address add address=10.0.0.1/24 interface=ether1"
-    ]
-
-    configure_mikrotik(NODE_IP, USER, PASS, config_commands)
+    run_config()
