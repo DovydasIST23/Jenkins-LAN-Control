@@ -7,7 +7,7 @@ from netmiko import ConnectHandler
 GNS3_IP = "192.168.56.102"
 PROJECT_NAME = "a"
 
-# IP Planas Alpine mazgams
+# IP Planas galiniams Alpine mazgams
 IP_PLAN = {
     "AlpineLinux-1": ("11.0.0.2",  "11.0.0.1"),
     "AlpineLinux-2": ("10.0.0.11", "10.0.0.1"),
@@ -27,8 +27,7 @@ def get_params(port):
 def configure_main1_ovs(port):
     """
     Konfigūruoja Main1 (OVS):
-    eth0 -> mikrotik
-    eth1, eth2, eth3 -> alpine mazgai
+    Sujungia eth0 (į mikrotik) ir eth1, eth2... (į Alpine) į vieną tiltą.
     """
     print(f"\n[OVS] Konfigūruojamas Main1 (Switching mode)...")
     try:
@@ -36,17 +35,13 @@ def configure_main1_ovs(port):
             tn.write_channel("\n")
             time.sleep(1)
             
-            # Komandų seka:
-            # 1. Sukuriam br0 tiltą (jei nėra)
-            # 2. Pridedam visas sąsajas į br0
-            # 3. Pakeliam visas sąsajas
-            
+            # Išvalome seną konfigūraciją ir sukuriame naują tiltą br0
             commands = [
                 "ovs-vsctl --if-exists del-br br0",
                 "ovs-vsctl add-br br0",
             ]
             
-            # Pridedame sąsajas eth0, eth1, eth2, eth3 į tiltą
+            # Prijungiame sąsajas eth0-eth3 prie tilto ir jas aktyvuojame
             for i in range(4):
                 commands.append(f"ovs-vsctl add-port br0 eth{i}")
                 commands.append(f"ip link set eth{i} up")
@@ -57,14 +52,13 @@ def configure_main1_ovs(port):
                 tn.send_command(cmd, expect_string=r'[#$]')
                 print(f"    -> {cmd}")
                 
-        print("[OVS] Main1 konfigūracija baigta.")
         return True
     except Exception as e:
         print(f"    -> [!] OVS Klaida: {e}")
         return False
 
 def configure_alpine(name, port, ip, gw):
-    """Standartinis IP nustatymas Alpine mazguose."""
+    """Nustato statinį IP Alpine Linux mazge."""
     print(f"\n[ALPINE] {name} (Port: {port})")
     try:
         with ConnectHandler(**get_params(port)) as tn:
@@ -99,7 +93,7 @@ def main():
             elif node.name in IP_PLAN:
                 configure_alpine(node.name, node.console, *IP_PLAN[node.name])
 
-        print("\n[FINISH] Tinklas paruoštas. Bandykite PING.")
+        print("\n[FINISH] Konfigūracija baigta. Tikrinkite ping tarp mazgų.")
         
     except Exception as e:
         print(f"Kritinė klaida: {e}")
