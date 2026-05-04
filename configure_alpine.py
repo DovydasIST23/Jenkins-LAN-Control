@@ -35,56 +35,67 @@ def main():
         print(f" [2] Atidariamas SSH ryšys (Port 22)...")
         ssh = ConnectHandler(**vm_params)
         
-        # --- MENIU APĖJIMAS ---
-        print(" [3] Apėjimas GNS3 meniu...")
-        time.sleep(3)
+        print(" [3] „Pralaužiamas“ GNS3 meniu (agresyvus rėžimas)...")
+        time.sleep(5)
         
-        # Pirmiausia spaudžiame Enter, kad uždarytume informacinį langą (< OK >)
-        ssh.write_channel("\r") 
-        time.sleep(2)
+        # Siunčiame 3x Enter, kad uždarytume bet kokius iššokusius langus (Information/Error)
+        for i in range(3):
+            ssh.write_channel("\r")
+            time.sleep(2)
         
-        # Dabar siunčiame '7', kad pasirinktume Shell pagrindiniame meniu
+        # Siunčiame '7', kad pasirinktume Shell
+        print(" [4] Siunčiama komanda '7' (Shell)...")
         ssh.write_channel("7\r")
-        time.sleep(3)
+        time.sleep(5)
         
-        # Pasižiūrime ar patekome į shell (turėtume pamatyti gns3@gns3vm:~$ )
+        # Pravalome ir tikriname būseną
         output = ssh.read_channel()
-        print(f"--- TERMINALO BŪSENA ---\n{output}\n--------------------------")
+        if "gns3@" in output.lower() or "ubuntu" in output.lower():
+            print(" [OK] Sėkmingai patekome į Shell terminalą.")
+        else:
+            print(" [!] Įspėjimas: Terminalas neatrodo kaip Shell, bet tęsiame...")
 
         for node in project.nodes:
             if node.node_type == "docker" and node.name in IP_PLAN:
                 ip, gw = IP_PLAN[node.name]
-                print(f"\n[NODE] {node.name} konfigūracija...")
+                print(f"\n [PROCESS] Mazgas: {node.name}")
 
-                # Siunčiame komandą gauti ID
-                ssh.write_channel(f"docker ps -q --filter 'label=com.gns3.node.id={node.node_id}'\r")
-                time.sleep(2)
+                # Ieškome Docker ID. Siunčiame Enter prieš komandą, kad išvalytume eilutę
+                ssh.write_channel("\r")
+                time.sleep(1)
+                cmd = f"docker ps -q --filter 'label=com.gns3.node.id={node.node_id}'\r"
+                ssh.write_channel(cmd)
+                time.sleep(3)
                 
                 res = ssh.read_channel()
                 container_id = None
+                # Ieškome ID (12 simbolių). Filtruojame tik alfanumerinius.
                 for line in res.splitlines():
                     clean = line.strip()
-                    # Docker ID yra 12 simbolių (pvz. a1b2c3d4e5f6)
-                    if len(clean) >= 12 and clean.isalnum() and "docker" not in clean:
+                    if len(clean) >= 12 and clean.isalnum() and "docker" not in clean.lower():
                         container_id = clean
                         break
 
                 if container_id:
-                    print(f"  -> Rasta ID: {container_id}. Nustatomas IP {ip}")
-                    # Naudojame \r komandų pabaigoje
-                    ssh.write_channel(f"docker exec {container_id} ip addr flush dev eth0\r")
-                    ssh.write_channel(f"docker exec {container_id} ip addr add {ip}/24 dev eth0\r")
-                    ssh.write_channel(f"docker exec {container_id} ip link set eth0 up\r")
-                    ssh.write_channel(f"docker exec {container_id} ip route add default via {gw}\r")
-                    time.sleep(1)
+                    print(f"  -> Rasta ID: {container_id}. Konfigūruojama...")
+                    # Naudojame tiesiogines komandas su didesniais tarpais
+                    for c in [
+                        f'docker exec {container_id} ip addr flush dev eth0\r',
+                        f'docker exec {container_id} ip addr add {ip}/24 dev eth0\r',
+                        f'docker exec {container_id} ip link set eth0 up\r',
+                        f'docker exec {container_id} ip route add default via {gw}\r'
+                    ]:
+                        ssh.write_channel(c)
+                        time.sleep(1.5)
+                    print(f"  -> [OK] IP {ip} nustatytas.")
                 else:
-                    print(f"  -> [!] Konteinerio ID nerastas. Patikrinkite ar mazgas paleistas.")
+                    print(f"  -> [!] Konteinerio ID nerastas. Logas: {res[:50]}...")
 
         ssh.disconnect()
-        print("\n[SUCCESS] Konfigūravimas baigtas.")
+        print("\n [SUCCESS] Pipeline užbaigtas.")
 
     except Exception as e:
-        print(f"\n[FATAL ERROR] {e}")
+        print(f"\n [FATAL ERROR] {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
