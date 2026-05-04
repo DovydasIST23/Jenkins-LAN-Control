@@ -21,96 +21,105 @@ def get_params(port):
         'device_type': 'generic_telnet',
         'host': GNS3_IP,
         'port': port,
-        'timeout': 10,
+        'timeout': 15, # Padidintas timeout stabilumui
     }
 
-def configure_ovs_logic(node_name, port):
-    """
-    Konfigūruoja OVS: Išvalo senus tiltus, sukuria naują ir aktyvuoja portus.
-    IP adresas priskiriamas pačiam tiltui tik pabaigoje.
-    """
-    print(f"\n[OVS] {node_name} konfigūravimas...")
+def configure_ovs_node(node_name, port):
+    """Konfigūruoja OVS mazgus: Main1, Support, Admin."""
+    print(f"\n[OVS] Konfiguruojamas {node_name} (Console: {port})...")
     try:
         with ConnectHandler(**get_params(port)) as tn:
             tn.write_channel("\n")
             time.sleep(1)
             
-            # 1. Švarus tiltų valymas (pašalina br-lan, kuris matomas tavo nuotraukose)
+            # 1. Išvalome senas šiukšles (ypač br-lan) ir sukuriame švarų tiltą
             commands = [
                 "ovs-vsctl --if-exists del-br br-final",
                 "ovs-vsctl --if-exists del-br br-lan",
                 "ovs-vsctl add-br br-final",
-                "ovs-vsctl set-fail-mode br-final standalone"
+                "ovs-vsctl set-fail-mode br-final standalone",
+                "ovs-vsctl set bridge br-final stp_enable=false"
             ]
             
-            # 2. Portų prijungimas ir pakėlimas
+            # 2. Prijungiame fizinius portus prie tilto
             for i in range(4):
                 commands.append(f"ovs-vsctl add-port br-final eth{i}")
                 commands.append(f"ip link set eth{i} up")
             
             commands.append("ip link set br-final up")
             
-            # 3. IP priskyrimas OVS mazgui (Management IP)
+            # 3. Priverstinis L2 srauto leidimas
+            commands.append("ovs-ofctl add-flow br-final action=normal")
+            
+            # Pridedame IP patiems switchams (valdymui/testavimui)
             if node_name == "Main1":
-                commands.append("ip addr flush dev br-final")
                 commands.append("ip addr add 10.0.0.100/24 dev br-final")
             elif node_name == "Support":
-                commands.append("ip addr flush dev br-final")
                 commands.append("ip addr add 10.1.0.100/24 dev br-final")
+            elif node_name == "Admin":
+                commands.append("ip addr add 11.0.0.100/24 dev br-final")
 
             for cmd in commands:
                 tn.send_command(cmd, expect_string=r'[#$]')
+                print(f"    -> {cmd}")
         return True
     except Exception as e:
-        print(f"    -> [!] OVS Klaida: {e}")
+        print(f"    -> [!] Klaida OVS mazge {node_name}: {e}")
         return False
 
-def configure_alpine_logic(name, port, ip, gw):
+def configure_alpine(name, port, ip, gw):
     """Priskiria IP adresą Alpine Linux mazgui."""
-    print(f"[ALPINE] {name} -> Nustatomas IP: {ip}")
+    print(f"\n[ALPINE] {name} -> Nustatomas IP: {ip}")
     try:
         with ConnectHandler(**get_params(port)) as tn:
             tn.write_channel("\n")
             time.sleep(1)
-            # Flush komanda išvalo senus/klaidingus IP adresus
+            # Pirmiausia išvalome visus senus IP, tada pridedame naują
             cmds = [
                 "ip addr flush dev eth0",
                 f"ip addr add {ip}/24 dev eth0",
                 "ip link set eth0 up",
-                f"ip route add default via {gw} || true" 
+                f"ip route add default via {gw} || true"
             ]
             for cmd in cmds:
                 tn.send_command(cmd, expect_string=r'[#$]')
+                print(f"    -> {cmd}")
         return True
     except Exception as e:
-        print(f"    -> [!] Alpine Klaida: {e}")
+        print(f"    -> [!] Klaida Alpine mazge {name}: {e}")
         return False
 
 def main():
+    # Jenkins stdout buffering fix
     sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+    
     try:
         server = Gns3Connector(url=f"http://{GNS3_IP}:80")
         project = Project(name=PROJECT_NAME, connector=server)
         project.get()
         project.get_nodes()
 
-        # SVARBU: Pirmiausia paruošiame OVS tiltus, tada dedame IP ant Alpine
-        ovs_nodes = [n for n in project.nodes if n.name in ["Main1", "Support"]]
-        alpine_nodes = [n for n in project.nodes if n.name in IP_PLAN]
+        # 1. ETAPAS: Konfigūruojame visus OVS (Main1, Support, Admin)
+        # Tai paruošia "kelius", bet gali numušti laikinus IP nuo Alpine
+        ovs_list = ["Main1", "Support", "Admin"]
+        for node in project.nodes:
+            if node.name in ovs_list and node.status == "started":
+                configure_ovs_node(node.name, node.console)
 
-        for node in ovs_nodes:
-            if node.status == "started":
-                configure_ovs_logic(node.name, node.console)
-
-        for node in alpine_nodes:
-            if node.status == "started":
+        # 2. ETAPAS: Tik dabar priskiriame IP adresus Alpine mazgams
+        for node in project.nodes:
+            if node.name in IP_PLAN and node.status == "started":
                 ip, gw = IP_PLAN[node.name]
-                configure_alpine_logic(node.name, node.console, ip, gw)
+                configure_alpine(node.name, node.console, ip, gw)
 
-        print("\n✅ Konfigūracija baigta. IP adresai priskirti visiems aktyviems mazgams.")
+        print("\n" + "="*40)
+        print("✅ VISAS TINKLAS SUKONFIGŪRUOTAS")
+        print("Patikrinkite ping: AlpineLinux-2 -> AlpineLinux-3 (10.0.0.12)")
+        print("="*40)
         
     except Exception as e:
-        print(f"Kritinė klaida: {e}")
+        print(f"\n[CRITICAL] Klaida: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
