@@ -7,8 +7,7 @@ from netmiko import ConnectHandler
 GNS3_IP = "192.168.56.102"
 PROJECT_NAME = "a"
 
-# IP Planas pagal tavo topologiją
-# (IP_adresas, Gateway)
+# IP Planas galiniams mazgams
 IP_PLAN = {
     "AlpineLinux-1": ("11.0.0.2",  "11.0.0.1"),
     "AlpineLinux-2": ("10.0.0.11", "10.0.0.1"),
@@ -17,22 +16,19 @@ IP_PLAN = {
     "AlpineLinux-5": ("10.1.0.11", "10.1.0.1")
 }
 
-# Jei OVS jungikliai turi IP valdymui, juos galima pridėti čia
-OVS_NODES = ["OVS-1", "OVS-2", "OVS-3"]
-
-def configure_alpine(node_name, console_port, ip, gw):
-    """Konfigūruoja Alpine Linux per Telnet."""
-    device_params = {
+def get_netmiko_params(port):
+    return {
         'device_type': 'generic_telnet',
         'host': GNS3_IP,
-        'port': console_port,
+        'port': port,
         'timeout': 10,
     }
-    
-    print(f"\n[PROCESS] Jungiamasi prie {node_name} (Port: {console_port})...")
-    
+
+def configure_alpine(node_name, port, ip, gw):
+    """Konfigūruoja Alpine Linux IP adresus."""
+    print(f"\n[ALPINE] Konfigūruojamas {node_name}...")
     try:
-        net_connect = ConnectHandler(**device_params)
+        net_connect = ConnectHandler(**get_netmiko_params(port))
         net_connect.write_channel("\n")
         time.sleep(1)
         
@@ -45,65 +41,72 @@ def configure_alpine(node_name, console_port, ip, gw):
         
         for cmd in commands:
             net_connect.send_command(cmd, expect_string=r'[#$]')
-            print(f"  -> [OK] {cmd}")
-            
+            print(f"    -> [OK] {cmd}")
+        
         net_connect.disconnect()
         return True
     except Exception as e:
-        print(f"  -> [!] Klaida mazge {node_name}: {e}")
+        print(f"    -> [!] Klaida: {e}")
         return False
 
-def configure_ovs(node_name, console_port):
+def configure_ovs_main(node_name, port):
     """
-    OVS konfigūracija (pvz., jei reikia įjungti bridge ar specifinius nustatymus).
-    Paprastai GNS3 OVS veikia kaip L2 jungiklis be papildomos IP konfigūracijos,
-    bet čia paruošta vieta komandoms.
+    Konfigūruoja Main1 (Open vSwitch).
+    Iš tavo 'ip a' matome br0, br1, br2, br3. 
+    Čia galime pridėti specifines OVS komandas.
     """
-    print(f"\n[PROCESS] Tikrinamas jungiklis {node_name} (Port: {console_port})...")
-    # Čia galėtum pridėti ovs-vsctl komandas, jei jų reikia
-    return True
+    print(f"\n[OVS] Konfigūruojamas pagrindinis jungiklis: {node_name}...")
+    try:
+        net_connect = ConnectHandler(**get_get_netmiko_params(port))
+        net_connect.write_channel("\n")
+        time.sleep(1)
+
+        # Pavyzdinės OVS komandos (jei reikia sujungti portus į tiltus)
+        # Šiuo atveju tiesiog pakeliame visas fizines sąsajas
+        commands = [f"ip link set eth{i} up" for i in range(8)]
+        
+        for cmd in commands:
+            net_connect.send_command(cmd, expect_string=r'[#$]')
+            
+        print(f"    -> [OK] Visos eth sąsajos įjungtos.")
+        net_connect.disconnect()
+        return True
+    except Exception as e:
+        print(f"    -> [!] OVS Klaida: {e}")
+        return False
 
 def main():
     sys.stdout.reconfigure(line_buffering=True)
     error_count = 0
-    success_count = 0
     
     try:
-        server_url = f"http://{GNS3_IP}:80"
-        print(f"[INFO] Jungiamasi prie GNS3: {server_url}")
-        
-        server = Gns3Connector(url=server_url)
+        server = Gns3Connector(url=f"http://{GNS3_IP}:80")
         project = Project(name=PROJECT_NAME, connector=server)
         project.get()
         project.get_nodes()
 
         for node in project.nodes:
-            # 1. Konfigūruojame Alpine Linux
+            if node.status != "started":
+                continue
+
+            # 1. Jei tai Alpine mazgas
             if node.name in IP_PLAN:
-                if node.status == "started":
-                    if configure_alpine(node.name, node.console, *IP_PLAN[node.name]):
-                        success_count += 1
-                    else:
-                        error_count += 1
-                else:
-                    print(f"[WARN] {node.name} neaktyvus. Praleidžiama.")
-
-            # 2. Patikriname OVS mazgus (jei reikia)
-            elif node.name in OVS_NODES:
-                if node.status == "started":
-                    configure_ovs(node.name, node.console)
-                else:
-                    print(f"[WARN] {node.name} neaktyvus.")
-
-        print(f"\n--- REZULTATAI ---")
-        print(f"Sėkmingai sukonfigūruota: {success_count}")
-        print(f"Klaidos: {error_count}")
+                if not configure_alpine(node.name, node.console, *IP_PLAN[node.name]):
+                    error_count += 1
+            
+            # 2. Jei tai Main1 (OVS) arba kiti OVS jungikliai
+            elif node.name == "Main1" or "OVS" in node.name:
+                if not configure_ovs_main(node.name, node.console):
+                    print(f"    [WARN] Nepavyko pilnai sukonfigūruoti {node.name}")
 
         if error_count > 0:
+            print(f"\n[FAILED] Baigta su {error_count} klaidomis.")
             sys.exit(1)
-            
+        else:
+            print("\n[SUCCESS] Tinklas paruoštas!")
+
     except Exception as e:
-        print(f"\n[ERROR] Kritinė klaida: {e}")
+        print(f"Kritinė klaida: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
