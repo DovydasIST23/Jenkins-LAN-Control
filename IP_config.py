@@ -21,38 +21,57 @@ IP_PLAN = {
 def configure_docker_nodes(project):
     print("\n[DEBUG] === 1 ETAPAS: Docker (Alpine) konfigūracija ===")
     vm_params = {
-        'device_type': 'linux',
+        'device_type': 'generic_termserver_telnet', # Ignoruojame SSH promptus
         'host': GNS3_IP,
         'username': 'gns3',
         'password': 'gns3',
+        'port': 22,
     }
     try:
         conn = ConnectHandler(**vm_params)
-        conn.write_channel("7\r") # Išeiname į shell
-        time.sleep(1)
-
-        # Kadangi etiketės (labels) pas jus neveikia, ieškome pagal pavadinimą
-        ps_output = conn.send_command('docker ps --format "{{.ID}}|{{.Names}}"')
-        containers = ps_output.strip().split('\n')
+        print("[INFO] Jungiamasi prie VM... Bandoma išeiti iš meniu.")
+        
+        # Priverstinai išeiname iš GNS3 meniu į Shell (siunčiame 7 ir Enter)
+        conn.write_channel("7\r")
+        time.sleep(2)
+        
+        # Pravalome viską, ką gavome
+        conn.read_channel()
 
         for node_name, (ip, gw) in IP_PLAN.items():
-            target_id = None
             node_obj = next((n for n in project.nodes if n.name == node_name), None)
+            if not node_obj:
+                continue
+
+            print(f"[PROCESS] Mazgas: {node_name}")
             
-            if node_obj:
-                for line in containers:
-                    if node_obj.node_id in line: # Ieškome mazgo ID konteinerio pavadinime
-                        target_id = line.split('|')[0]
-                        break
+            # Gauname ID per Shell
+            cmd = f"docker ps -q --filter 'label=com.gns3.node.id={node_obj.node_id}'\r"
+            conn.write_channel(cmd)
+            time.sleep(1)
             
-            if target_id:
-                print(f"[OK] Rasta: {node_name}. Konfigūruojama...")
-                conn.send_command(f'docker exec {target_id} ip addr flush dev eth0')
-                conn.send_command(f'docker exec {target_id} ip addr add {ip}/24 dev eth0')
-                conn.send_command(f'docker exec {target_id} ip link set eth0 up')
-                conn.send_command(f'docker exec {target_id} ip route add default via {gw}')
+            output = conn.read_channel().splitlines()
+            # ID paprastai būna paskutinėje arba priešpaskutinėje eilutėje
+            container_id = None
+            for line in reversed(output):
+                clean_line = line.strip()
+                if len(clean_line) >= 12 and clean_line.isalnum():
+                    container_id = clean_line
+                    break
+
+            if container_id:
+                print(f"  -> Rasta ID: {container_id}. Siunčiamos komandos.")
+                docker_cmds = [
+                    f'docker exec {container_id} ip addr flush dev eth0\r',
+                    f'docker exec {container_id} ip addr add {ip}/24 dev eth0\r',
+                    f'docker exec {container_id} ip link set eth0 up\r',
+                    f'docker exec {container_id} ip route add default via {gw}\r'
+                ]
+                for d_cmd in docker_cmds:
+                    conn.write_channel(d_cmd)
+                    time.sleep(0.5)
             else:
-                print(f"[!] Mazgas {node_name} nerastas Docker sąraše.")
+                print(f"  -> [!] Konteineris nerastas.")
 
         conn.disconnect()
     except Exception as e:
@@ -64,24 +83,22 @@ def configure_mikrotik(project):
     if not mt_node: return
 
     try:
-        # Naudojame generic_telnet, kad "neužsiciklintų" ties prisijungimu
         conn = ConnectHandler(device_type='generic_telnet', host=GNS3_IP, port=mt_node.console)
         conn.write_channel("\r\r")
         time.sleep(1)
         
-        # Tikriname, ar vis dar iPXE režimas
         output = conn.read_channel()
         if "iPXE" in output or "No bootable" in output:
-            print("[CRITICAL] MikroTik užstrigęs iPXE/Boot loop. Konfigūracija neįmanoma.")
+            print("[CRITICAL] MikroTik vis dar iPXE/Boot loop. Rankiniu būdu sutvarkykite GNS3!")
             return
 
-        commands = ["/ip address add address=11.0.0.1/24 interface=ether1",
-                    "/ip address add address=10.0.0.1/24 interface=ether2"]
+        commands = ["/ip address add address=11.0.0.1/24 interface=ether1\r",
+                    "/ip address add address=10.0.0.1/24 interface=ether2\r"]
         for cmd in commands:
-            conn.write_channel(cmd + "\r")
+            conn.write_channel(cmd)
             time.sleep(1)
         conn.disconnect()
-        print("[SUCCESS] MikroTik komandos nusiųstos.")
+        print("[SUCCESS] MikroTik baigtas.")
     except Exception as e:
         print(f"[ERR] MikroTik dalis: {e}")
 
@@ -92,6 +109,5 @@ if __name__ == "__main__":
     project.get()
     project.get_nodes()
     
-    # Sukeičiame vietomis: pirmiausia veikiantys mazgai
     configure_docker_nodes(project)
     configure_mikrotik(project)
