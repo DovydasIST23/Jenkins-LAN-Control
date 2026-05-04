@@ -1,10 +1,21 @@
+import sys
 import time
+from gns3fy import Gns3Connector, Project
 from netmiko import ConnectHandler
 
-# Konfigūracija
+# --- KONFIGŪRACIJA ---
 GNS3_IP = "192.168.56.102"
-ADMIN_PORT = 5020  # Admin OVS konsolės portas
-ALPINE1_PORT = 5003 # AlpineLinux-1 konsolės portas (patikrinkite GNS3)
+PROJECT_NAME = "a"
+
+# Užtikriname, kad stdout naudos UTF-8, kad išvengtume koduotės klaidų
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+
+# IP Planas specifiniams mazgams
+IP_PLAN = {
+    "AlpineLinux-1": ("11.0.0.2", "11.0.0.1"),
+    "AlpineLinux-3": ("10.0.0.12", "10.0.0.1")
+}
 
 def get_params(port):
     return {
@@ -14,46 +25,82 @@ def get_params(port):
         'timeout': 15,
     }
 
-def fix_admin_ovs():
-    print("\n[OVS] Admin mazgo tvarkymas...")
+def configure_admin_ovs(port):
+    """Sutvarko Admin OVS: išvalo senus tiltus ir sujungia eth0-eth3."""
+    print(f"\n[OVS] Tvarkomas Admin mazgas (Port: {port})...")
     try:
-        with ConnectHandler(**get_params(ADMIN_PORT)) as tn:
-            # 1. Išvalome visus senus tiltus, kurie gali blokuoti eth sąsajas
-            tn.send_command("ovs-vsctl --if-exists del-br br-lan")
-            tn.send_command("ovs-vsctl --if-exists del-br br-final")
+        with ConnectHandler(**get_params(port)) as tn:
+            tn.write_channel("\n")
+            time.sleep(1)
             
-            # 2. Sukuriame naują švarų tiltą
-            tn.send_command("ovs-vsctl add-br br-final")
-            tn.send_command("ovs-vsctl set-fail-mode br-final standalone")
+            commands = [
+                "ovs-vsctl --if-exists del-br br-lan",
+                "ovs-vsctl --if-exists del-br br-final",
+                "ovs-vsctl add-br br-final",
+                "ovs-vsctl set-fail-mode br-final standalone",
+                # Prijungiame visus portus: eth3 (i Mikrotik) ir eth0 (i Alpine1)
+                "ovs-vsctl add-port br-final eth0",
+                "ovs-vsctl add-port br-final eth1",
+                "ovs-vsctl add-port br-final eth2",
+                "ovs-vsctl add-port br-final eth3",
+                "ip link set eth0 up",
+                "ip link set eth1 up",
+                "ip link set eth2 up",
+                "ip link set eth3 up",
+                "ip link set br-final up",
+                "ip addr add 11.0.0.100/24 dev br-final",
+                "ovs-ofctl add-flow br-final action=normal"
+            ]
             
-            # 3. Prijungiame visus fizinius portus prie br-final
-            # Svarbu: eth3 (į MikroTik) ir eth0 (į Alpine1) turi būti čia
-            for i in range(4):
-                tn.send_command(f"ovs-vsctl add-port br-final eth{i}")
-                tn.send_command(f"ip link set eth{i} up")
-            
-            # 4. Priskiriame IP pačiam Admin jungikliui
-            tn.send_command("ip link set br-final up")
-            tn.send_command("ip addr add 11.0.0.100/24 dev br-final")
-            
-            # 5. Leidžiame visą srautą
-            tn.send_command("ovs-ofctl add-flow br-final action=normal")
-            print("✅ Admin OVS sukonfigūruotas.")
+            for cmd in commands:
+                tn.send_command(cmd, expect_string=r'[#$]')
+            print("OK: Admin OVS sukonfiguruotas.")
     except Exception as e:
-        print(f"❌ Admin klaida: {e}")
+        print(f"ERROR: Admin OVS klaida: {e}")
 
-def fix_alpine1():
-    print("\n[ALPINE] AlpineLinux-1 IP nustatymas...")
+def configure_alpine(name, port, ip, gw):
+    """Nustato IP adresa Alpine mazgui."""
+    print(f"\n[ALPINE] Nustatomas {name} (IP: {ip})...")
     try:
-        with ConnectHandler(**get_params(ALPINE1_PORT)) as tn:
-            tn.send_command("ip link set eth0 up")
-            tn.send_command("ip addr flush dev eth0")
-            tn.send_command("ip addr add 11.0.0.2/24 dev eth0")
-            tn.send_command("ip route add default via 11.0.0.1")
-            print("✅ AlpineLinux-1 IP nustatytas: 11.0.0.2")
+        with ConnectHandler(**get_params(port)) as tn:
+            tn.write_channel("\n")
+            time.sleep(2)
+            
+            cmds = [
+                "ip link set eth0 up",
+                "ip addr flush dev eth0",
+                f"ip addr add {ip}/24 dev eth0",
+                f"ip route add default via {gw} || true"
+            ]
+            for cmd in cmds:
+                tn.send_command(cmd, expect_string=r'[#$]')
+            print(f"OK: {name} IP nustatytas.")
     except Exception as e:
-        print(f"❌ Alpine1 klaida: {e}")
+        print(f"ERROR: {name} klaida: {e}")
+
+def main():
+    try:
+        server = Gns3Connector(url=f"http://{GNS3_IP}:80")
+        project = Project(name=PROJECT_NAME, connector=server)
+        project.get()
+        project.get_nodes()
+
+        for node in project.nodes:
+            if node.status == "started":
+                # 1. Konfiguruojame Admin OVS
+                if node.name == "Admin":
+                    configure_admin_ovs(node.console)
+                
+                # 2. Konfiguruojame Alpine1 ir Alpine3
+                if node.name in IP_PLAN:
+                    ip, gw = IP_PLAN[node.name]
+                    configure_alpine(node.name, node.console, ip, gw)
+
+        print("\nKonfiguracija baigta sėkmingai.")
+        
+    except Exception as e:
+        print(f"Kritinė klaida: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    fix_admin_ovs()
-    fix_alpine1()
+    main()
