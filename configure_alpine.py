@@ -7,7 +7,7 @@ from netmiko import ConnectHandler
 GNS3_IP = "192.168.56.102"
 PROJECT_NAME = "a"
 
-# IP adresai galiniams taškams
+# IP Planas Alpine mazgams
 IP_PLAN = {
     "AlpineLinux-1": ("11.0.0.2",  "11.0.0.1"),
     "AlpineLinux-2": ("10.0.0.11", "10.0.0.1"),
@@ -24,45 +24,48 @@ def get_params(port):
         'timeout': 10,
     }
 
-def configure_main_ovs(port):
-    """Sutvarko Main1 OVS, kad jis veiktų kaip paprastas switch'as."""
-    print(f"\n[OVS] Konfigūruojamas Main1 (Switch režimas)...")
+def configure_main1_ovs(port):
+    """
+    Konfigūruoja Main1 (OVS):
+    eth0 -> mikrotik
+    eth1, eth2, eth3 -> alpine mazgai
+    """
+    print(f"\n[OVS] Konfigūruojamas Main1 (Switching mode)...")
     try:
         with ConnectHandler(**get_params(port)) as tn:
             tn.write_channel("\n")
             time.sleep(1)
             
-            # 1. Pašaliname senus tiltus, kad nebūtų konfliktų
-            # 2. Sukuriame vieną pagrindinį tiltą br-lan
-            # 3. Prijungiame visas eth sąsajas (kurios matomos tavo 'ip a')
+            # Komandų seka:
+            # 1. Sukuriam br0 tiltą (jei nėra)
+            # 2. Pridedam visas sąsajas į br0
+            # 3. Pakeliam visas sąsajas
             
             commands = [
-                "ovs-vsctl del-br br-lan", # Išvalome seną
-                "ovs-vsctl del-br br0",    # Išvalome šiukšles
-                "ovs-vsctl del-br br1",
-                "ovs-vsctl add-br br-lan", # Sukuriame naują švarų tiltą
+                "ovs-vsctl --if-exists del-br br0",
+                "ovs-vsctl add-br br0",
             ]
             
-            # Prijungiame sąsajas (tikriname eth0 iki eth3, nes jos dažniausiai naudojamos)
-            # Pagal tavo nuotrauką Main1 turi eth0, eth1, eth2, eth3
+            # Pridedame sąsajas eth0, eth1, eth2, eth3 į tiltą
             for i in range(4):
-                commands.append(f"ovs-vsctl add-port br-lan eth{i}")
+                commands.append(f"ovs-vsctl add-port br0 eth{i}")
                 commands.append(f"ip link set eth{i} up")
             
-            commands.append("ip link set br-lan up")
+            commands.append("ip link set br0 up")
             
             for cmd in commands:
                 tn.send_command(cmd, expect_string=r'[#$]')
                 print(f"    -> {cmd}")
                 
+        print("[OVS] Main1 konfigūracija baigta.")
         return True
     except Exception as e:
         print(f"    -> [!] OVS Klaida: {e}")
         return False
 
 def configure_alpine(name, port, ip, gw):
-    """Nustato Alpine Linux IP."""
-    print(f"\n[ALPINE] {name} -> {ip}")
+    """Standartinis IP nustatymas Alpine mazguose."""
+    print(f"\n[ALPINE] {name} (Port: {port})")
     try:
         with ConnectHandler(**get_params(port)) as tn:
             tn.write_channel("\n")
@@ -92,14 +95,14 @@ def main():
             if node.status != "started": continue
             
             if node.name == "Main1":
-                configure_main_ovs(node.console)
+                configure_main1_ovs(node.console)
             elif node.name in IP_PLAN:
                 configure_alpine(node.name, node.console, *IP_PLAN[node.name])
 
-        print("\n[FINISH] Viskas sukonfigūruota. Bandykite ping iš AlpineLinux-2.")
+        print("\n[FINISH] Tinklas paruoštas. Bandykite PING.")
         
     except Exception as e:
-        print(f"Klaida: {e}")
+        print(f"Kritinė klaida: {e}")
 
 if __name__ == "__main__":
     main()
