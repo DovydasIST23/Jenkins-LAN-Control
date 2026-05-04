@@ -1,7 +1,6 @@
 import os
 import sys
 import time
-import requests
 from gns3fy import Gns3Connector, Project
 
 # Nustatymai
@@ -32,31 +31,37 @@ def main():
                 ip, gw = IP_PLAN[node.name]
                 print(f"\n[PROCESS] Mazgas: {node.name}")
                 
-                # Naudojame tiesioginį GNS3 API kvietimą komandoms vykdyti konteineryje
-                # Tai apeina bet kokius SSH meniu ar terminalo simbolius
-                exec_url = f"{GNS3_URL}/v2/projects/{project.project_id}/nodes/{node.node_id}/docker/exec"
-                
-                cmds = [
+                # Komandos Alpine konfigūravimui
+                commands = [
                     f"ip addr flush dev eth0",
                     f"ip addr add {ip}/24 dev eth0",
                     f"ip link set eth0 up",
                     f"ip route add default via {gw}"
                 ]
                 
-                for cmd in cmds:
-                    # Siunčiame komandą per HTTP POST
-                    payload = {"command": cmd}
-                    response = requests.post(exec_url, json=payload)
-                    if response.status_code == 200 or response.status_code == 201:
+                for cmd in commands:
+                    try:
+                        # Naudojame gns3fy integruotą metodą komandų vykdymui
+                        # Tai automatiškai parinks teisingą API kelią
+                        response = node.run_custom_command(cmd)
                         print(f"  -> [OK] {cmd}")
-                    else:
-                        print(f"  -> [!] Klaida vykdant '{cmd}': {response.text}")
+                    except Exception as exec_err:
+                        # Jei run_custom_command nepavyksta, bandom per docker_command
+                        try:
+                            node.connector.post(
+                                f"/projects/{project.project_id}/nodes/{node.node_id}/docker/exec",
+                                data={"command": cmd}
+                            )
+                            print(f"  -> [OK] (Alt path) {cmd}")
+                        except:
+                            print(f"  -> [!] Nepavyko įvykdyti '{cmd}': {exec_err}")
+                    
                     time.sleep(0.5)
 
-        print("\n[SUCCESS] Visų Docker mazgų konfigūracija baigta per API.")
+        print("\n[SUCCESS] Konfigūravimas per API baigtas.")
 
     except Exception as e:
-        print(f"\n[ERROR] {e}")
+        print(f"\n[ERROR] Kritinė klaida: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
