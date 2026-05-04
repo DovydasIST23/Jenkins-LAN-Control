@@ -27,22 +27,23 @@ def configure_docker_nodes(project):
         'host': GNS3_IP,
         'username': GNS3_VM_USER,
         'password': GNS3_VM_PASS,
-        # Pridėta: laukiame bet kokio prompt'o, kad išvengtume "Pattern not detected"
-        'expect_string': r'[\$\#\>]', 
+        # Pašalintas expect_string iš čia
     }
     try:
         ssh_conn = ConnectHandler(**vm_params)
         for node in project.nodes:
             if node.node_type == "docker" and node.name in IP_PLAN:
                 ip, gw = IP_PLAN[node.name]
+                # expect_string naudojame čia
                 cmd = f'docker ps --filter "label=com.gns3.node.id={node.node_id}" --format "{{{{.ID}}}}"'
-                container_id = ssh_conn.send_command(cmd).strip()
+                container_id = ssh_conn.send_command(cmd, expect_string=r'[\$\#]').strip()
+                
                 if container_id:
-                    print(f"  -> {node.name} ({ip})")
-                    ssh_conn.send_command(f'docker exec {container_id} ip addr flush dev eth0')
-                    ssh_conn.send_command(f'docker exec {container_id} ip addr add {ip}/24 dev eth0')
-                    ssh_conn.send_command(f'docker exec {container_id} ip link set eth0 up')
-                    ssh_conn.send_command(f'docker exec {container_id} ip route add default via {gw}')
+                    print(f"  -> Konfiguruojamas {node.name} ({ip})")
+                    ssh_conn.send_command(f'docker exec {container_id} ip addr flush dev eth0', expect_string=r'[\$\#]')
+                    ssh_conn.send_command(f'docker exec {container_id} ip addr add {ip}/24 dev eth0', expect_string=r'[\$\#]')
+                    ssh_conn.send_command(f'docker exec {container_id} ip link set eth0 up', expect_string=r'[\$\#]')
+                    ssh_conn.send_command(f'docker exec {container_id} ip route add default via {gw}', expect_string=r'[\$\#]')
         ssh_conn.disconnect()
     except Exception as e:
         print(f"[CRITICAL] Docker klaida: {e}")
@@ -52,26 +53,31 @@ def configure_mikrotik(project):
     mt_node = next((n for n in project.nodes if "mikrotik" in n.name.lower()), None)
     if not mt_node: return
 
-    # PAKEISTA: Naudojamas 'generic_telnet', nes Netmiko RouterOS per Telnet yra problematiškas
     mt_params = {
         'device_type': 'generic_telnet',
         'host': GNS3_IP,
         'port': mt_node.console,
-        'username': 'admin',
-        'password': '',
     }
     try:
         net_conn = ConnectHandler(**mt_params)
-        # Siunčiame komandas tiesiai į terminalą
+        
+        # Pirmiausia nuspaudžiame Enter, kad „pažadintume“ konsolę
+        net_conn.write_channel("\r")
+        time.sleep(2)
+        
         commands = [
-            "/ip address add address=11.0.0.1/24 interface=ether1\r",
-            "/ip address add address=10.0.0.1/24 interface=ether2\r",
-            "/ip address add address=10.1.0.1/24 interface=ether3\r",
-            "/ip address add address=10.2.0.1/24 interface=ether4\r"
+            "/ip address add address=11.0.0.1/24 interface=ether1",
+            "/ip address add address=10.0.0.1/24 interface=ether2",
+            "/ip address add address=10.1.0.1/24 interface=ether3",
+            "/ip address add address=10.2.0.1/24 interface=ether4"
         ]
+        
         for cmd in commands:
-            net_conn.write_channel(cmd)
-            time.sleep(1)
+            print(f"  -> Siunciama komanda: {cmd}")
+            # Siunčiame komandą simbolis po simbolio arba su Enter pabaigoje
+            net_conn.write_channel(cmd + "\r")
+            time.sleep(1.5) # Būtina pauzė, kad MikroTik priimtų komandą
+            
         print("[SUCCESS] MikroTik komandos nusiųstos.")
         net_conn.disconnect()
     except Exception as e:
