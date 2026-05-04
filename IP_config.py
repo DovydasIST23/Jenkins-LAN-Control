@@ -14,7 +14,7 @@ GNS3_URL = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:80")
 PROJECT_NAME = "a"
 
 GNS3_VM_HOST = "192.168.56.102"
-GNS3_VM_USER = "gns3"
+GNS3_VM_USER = "gns3@192.168.56.102"
 GNS3_VM_PASS = "gns3"
 
 # -------------------------
