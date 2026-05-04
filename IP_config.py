@@ -6,7 +6,7 @@ from gns3fy import Gns3Connector, Project
 
 # --- KONFIGŪRACIJA ---
 GNS3_IP = "192.168.56.102"
-GNS3_URL = f"http://{GNS3_IP}:80"
+GNS3_URL = os.environ.get("GNS3_SERVER_URL", f"http://{GNS3_IP}:80")
 PROJECT_NAME = "a"
 
 IP_PLAN = {
@@ -19,7 +19,7 @@ IP_PLAN = {
 }
 
 def configure_docker_nodes(project):
-    print("\n[DEBUG] === Docker (Alpine) konfigūracija pagal vardus ===")
+    print("\n[DEBUG] === 1 ETAPAS: Docker (Alpine) konfigūracija ===")
     vm_params = {
         'device_type': 'linux',
         'host': GNS3_IP,
@@ -31,59 +31,55 @@ def configure_docker_nodes(project):
         conn.write_channel("7\r") # Išeiname į shell
         time.sleep(1)
 
-        # Gauname visų veikiančių konteinerių sąrašą (ID ir Name)
-        print("[INFO] Gaunamas Docker konteinerių sąrašas...")
+        # Kadangi etiketės (labels) pas jus neveikia, ieškome pagal pavadinimą
         ps_output = conn.send_command('docker ps --format "{{.ID}}|{{.Names}}"')
         containers = ps_output.strip().split('\n')
 
         for node_name, (ip, gw) in IP_PLAN.items():
-            # Ieškome konteinerio, kurio pavadinime yra mazgo vardas
-            # GNS3 pavadinimai dažnai būna ilgi, pvz: "vnc-1-7da462ba-1b12..."
-            # Todėl ieškome dalinio sutapimo
             target_id = None
-            for line in containers:
-                if '|' in line:
-                    c_id, c_name = line.split('|')
-                    # Dažnai GNS3 pavadinime būna mazgo ID, todėl ieškome per project objektą
-                    node_obj = next((n for n in project.nodes if n.name == node_name), None)
-                    if node_obj and node_obj.node_id in c_name:
-                        target_id = c_id
+            node_obj = next((n for n in project.nodes if n.name == node_name), None)
+            
+            if node_obj:
+                for line in containers:
+                    if node_obj.node_id in line: # Ieškome mazgo ID konteinerio pavadinime
+                        target_id = line.split('|')[0]
                         break
             
             if target_id:
-                print(f"[OK] Rasta: {node_name} -> ID: {target_id}. Konfigūruojama...")
+                print(f"[OK] Rasta: {node_name}. Konfigūruojama...")
                 conn.send_command(f'docker exec {target_id} ip addr flush dev eth0')
                 conn.send_command(f'docker exec {target_id} ip addr add {ip}/24 dev eth0')
                 conn.send_command(f'docker exec {target_id} ip link set eth0 up')
                 conn.send_command(f'docker exec {target_id} ip route add default via {gw}')
             else:
-                print(f"[!] Mazgas {node_name} Docker sąraše nerastas.")
+                print(f"[!] Mazgas {node_name} nerastas Docker sąraše.")
 
         conn.disconnect()
     except Exception as e:
         print(f"[ERR] Docker dalis: {e}")
 
 def configure_mikrotik(project):
-    # Paliekame tą pačią logiką, bet pridėjome apsaugą nuo iPXE
-    print("\n[DEBUG] === MikroTik konfigūracija ===")
+    print("\n[DEBUG] === 2 ETAPAS: MikroTik konfigūracija ===")
     mt_node = next((n for n in project.nodes if "mikrotik" in n.name.lower()), None)
     if not mt_node: return
 
     try:
+        # Naudojame generic_telnet, kad "neužsiciklintų" ties prisijungimu
         conn = ConnectHandler(device_type='generic_telnet', host=GNS3_IP, port=mt_node.console)
         conn.write_channel("\r\r")
         time.sleep(1)
         
+        # Tikriname, ar vis dar iPXE režimas
         output = conn.read_channel()
-        if "No bootable device" in output or "iPXE" in output:
-            print("[CRITICAL] MikroTik nepasileido (No bootable device). Praleidžiama.")
+        if "iPXE" in output or "No bootable" in output:
+            print("[CRITICAL] MikroTik užstrigęs iPXE/Boot loop. Konfigūracija neįmanoma.")
             return
 
         commands = ["/ip address add address=11.0.0.1/24 interface=ether1",
                     "/ip address add address=10.0.0.1/24 interface=ether2"]
         for cmd in commands:
             conn.write_channel(cmd + "\r")
-            time.sleep(1.5)
+            time.sleep(1)
         conn.disconnect()
         print("[SUCCESS] MikroTik komandos nusiųstos.")
     except Exception as e:
@@ -96,5 +92,6 @@ if __name__ == "__main__":
     project.get()
     project.get_nodes()
     
+    # Sukeičiame vietomis: pirmiausia veikiantys mazgai
     configure_docker_nodes(project)
     configure_mikrotik(project)
