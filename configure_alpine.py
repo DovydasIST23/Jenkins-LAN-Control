@@ -1,77 +1,59 @@
 import os
 import sys
 import time
-from netmiko import ConnectHandler
+import requests
+from gns3fy import Gns3Connector, Project
 
+# Nustatymai
 GNS3_IP = "192.168.56.102"
+GNS3_URL = f"http://{GNS3_IP}:80"
+PROJECT_NAME = "a"
 
-# IP Planas eilės tvarka (konfigūruosime tiek, kiek rasime)
-IP_LIST = [
-    ("11.0.0.2", "11.0.0.1"),
-    ("10.0.0.11", "10.0.0.1"),
-    ("10.0.0.12", "10.0.0.1"),
-    ("10.1.0.10", "10.1.0.1"),
-    ("10.1.0.11", "10.1.0.1")
-]
+# IP Planas
+IP_PLAN = {
+    "AlpineLinux-1": ("11.0.0.2",  "11.0.0.1"),
+    "AlpineLinux-2": ("10.0.0.11", "10.0.0.1"),
+    "AlpineLinux-3": ("10.0.0.12", "10.0.0.1"),
+    "AlpineLinux-4": ("10.1.0.10", "10.1.0.1"),
+    "AlpineLinux-5": ("10.1.0.11", "10.1.0.1")
+}
 
 def main():
     sys.stdout.reconfigure(line_buffering=True)
     try:
-        ssh = ConnectHandler(
-            device_type='terminal_server',
-            host=GNS3_IP,
-            username='gns3',
-            password='gns3',
-            port=22
-        )
-        
-        print("--- BRUTALUS terminalo valymas ---")
-        # 1. Priverstinai išeiname iš bet kokių langų ir užmušame meniu procesą
-        ssh.write_channel("\r\r")
-        time.sleep(1)
-        # Ši komanda nužudo GNS3 meniu procesą, kad jis daugiau nepieštų ekrane
-        ssh.write_channel("sudo pkill -f gns3vm-menu\r")
-        time.sleep(2)
-        # Patekome į gryną shell
-        ssh.write_channel("reset && stty cols 200 rows 100\r")
-        time.sleep(3)
-        ssh.read_channel() # Išvalome šiukšles
+        print(f"[INFO] Jungiamasi prie GNS3 API: {GNS3_URL}")
+        server = Gns3Connector(url=GNS3_URL)
+        project = Project(name=PROJECT_NAME, connector=server)
+        project.get()
+        project.get_nodes()
 
-        # 2. Gauname ID (naudojame ancestor, kad rastume tik Alpine)
-        print("[INFO] Užklausiamas Docker sąrašas...")
-        ssh.write_channel("docker ps --filter 'ancestor=alpine:latest' -q\r")
-        time.sleep(2)
-        
-        output = ssh.read_channel()
-        # Išvalome ANSI kodus iš ID sąrašo (paimame tik 12 simbolių šešioliktainius)
-        raw_ids = output.replace('\r', '').split('\n')
-        ids = [line.strip() for line in raw_ids if len(line.strip()) == 12 and line.strip().isalnum()]
-        
-        if not ids:
-            print(f"[!] ID nerasta. Terminalo šiukšlės: {repr(output[:100])}")
-            return
+        for node in project.nodes:
+            if node.node_type == "docker" and node.name in IP_PLAN:
+                ip, gw = IP_PLAN[node.name]
+                print(f"\n[PROCESS] Mazgas: {node.name}")
+                
+                # Naudojame tiesioginį GNS3 API kvietimą komandoms vykdyti konteineryje
+                # Tai apeina bet kokius SSH meniu ar terminalo simbolius
+                exec_url = f"{GNS3_URL}/v2/projects/{project.project_id}/nodes/{node.node_id}/docker/exec"
+                
+                cmds = [
+                    f"ip addr flush dev eth0",
+                    f"ip addr add {ip}/24 dev eth0",
+                    f"ip link set eth0 up",
+                    f"ip route add default via {gw}"
+                ]
+                
+                for cmd in cmds:
+                    # Siunčiame komandą per HTTP POST
+                    payload = {"command": cmd}
+                    response = requests.post(exec_url, json=payload)
+                    if response.status_code == 200 or response.status_code == 201:
+                        print(f"  -> [OK] {cmd}")
+                    else:
+                        print(f"  -> [!] Klaida vykdant '{cmd}': {response.text}")
+                    time.sleep(0.5)
 
-        print(f"[OK] Rasta Alpine konteinerių: {len(ids)}")
-
-        for i, container_id in enumerate(ids):
-            if i >= len(IP_LIST): break
-            
-            ip, gw = IP_LIST[i]
-            print(f"  -> Konfigūruojamas {container_id} -> IP: {ip}")
-            
-            # Konfigūruojame
-            cmds = [
-                f"docker exec {container_id} ip addr flush dev eth0\r",
-                f"docker exec {container_id} ip addr add {ip}/24 dev eth0\r",
-                f"docker exec {container_id} ip link set eth0 up\r",
-                f"docker exec {container_id} ip route add default via {gw}\r"
-            ]
-            for c in cmds:
-                ssh.write_channel(c)
-                time.sleep(1)
-
-        ssh.disconnect()
-        print("\n[SUCCESS] Konfigūracija sėkmingai baigta!")
+        print("\n[SUCCESS] Visų Docker mazgų konfigūracija baigta per API.")
 
     except Exception as e:
         print(f"\n[ERROR] {e}")
