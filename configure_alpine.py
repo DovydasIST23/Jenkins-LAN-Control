@@ -1,4 +1,3 @@
-import os
 import sys
 import time
 from gns3fy import Gns3Connector, Project
@@ -8,7 +7,7 @@ GNS3_IP = "192.168.56.102"
 GNS3_URL = f"http://{GNS3_IP}:80"
 PROJECT_NAME = "a"
 
-# IP Planas
+# IP Planas: { "Mazgo pavadinimas": ("IP adresas", "Vartai") }
 IP_PLAN = {
     "AlpineLinux-1": ("11.0.0.2",  "11.0.0.1"),
     "AlpineLinux-2": ("10.0.0.11", "10.0.0.1"),
@@ -18,7 +17,11 @@ IP_PLAN = {
 }
 
 def main():
+    # Užtikriname, kad Jenkins konsolė rodytų tekstą realiu laiku
     sys.stdout.reconfigure(line_buffering=True)
+    
+    error_count = 0
+    
     try:
         print(f"[INFO] Jungiamasi prie GNS3 API: {GNS3_URL}")
         server = Gns3Connector(url=GNS3_URL)
@@ -28,10 +31,15 @@ def main():
 
         for node in project.nodes:
             if node.node_type == "docker" and node.name in IP_PLAN:
+                # Patikriname, ar mazgas paleistas
+                if node.status != "started":
+                    print(f"[WARN] Mazgas {node.name} yra išjungtas (status: {node.status}). Praleidžiama.")
+                    continue
+
                 ip, gw = IP_PLAN[node.name]
-                print(f"\n[PROCESS] Mazgas: {node.name}")
+                print(f"\n[PROCESS] Konfigūruojamas mazgas: {node.name}")
                 
-                # Komandos Alpine konfigūravimui
+                # Alpine Linux tinklo komandos
                 commands = [
                     f"ip addr flush dev eth0",
                     f"ip addr add {ip}/24 dev eth0",
@@ -41,24 +49,24 @@ def main():
                 
                 for cmd in commands:
                     try:
-                        # Naudojame gns3fy integruotą metodą komandų vykdymui
-                        # Tai automatiškai parinks teisingą API kelią
-                        response = node.run_custom_command(cmd)
+                        # GNS3 API Docker vykdymo kelias
+                        # Naudojame server.post, nes tai patikimiausias būdas Docker komandoms
+                        exec_url = f"/projects/{project.project_id}/nodes/{node.node_id}/docker/exec"
+                        
+                        # API tikisi JSON objekto su raktu "command"
+                        server.post(exec_url, data={"command": cmd})
                         print(f"  -> [OK] {cmd}")
                     except Exception as exec_err:
-                        # Jei run_custom_command nepavyksta, bandom per docker_command
-                        try:
-                            node.connector.post(
-                                f"/projects/{project.project_id}/nodes/{node.node_id}/docker/exec",
-                                data={"command": cmd}
-                            )
-                            print(f"  -> [OK] (Alt path) {cmd}")
-                        except:
-                            print(f"  -> [!] Nepavyko įvykdyti '{cmd}': {exec_err}")
+                        print(f"  -> [!] KLAIDA vykdant '{cmd}': {exec_err}")
+                        error_count += 1
                     
-                    time.sleep(0.5)
+                    time.sleep(0.3)
 
-        print("\n[SUCCESS] Konfigūravimas per API baigtas.")
+        if error_count > 0:
+            print(f"\n[FAILED] Konfigūravimas baigtas su {error_count} klaidomis.")
+            sys.exit(1)
+        else:
+            print("\n[SUCCESS] Visa konfigūracija sėkmingai pritaikyta.")
 
     except Exception as e:
         print(f"\n[ERROR] Kritinė klaida: {e}")
