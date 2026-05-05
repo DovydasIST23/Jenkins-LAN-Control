@@ -7,7 +7,6 @@ from netmiko import ConnectHandler
 GNS3_IP = "192.168.56.102"
 PROJECT_NAME = "a"
 
-# Užtikriname UTF-8 palaikymą Windows aplinkoje
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
@@ -29,45 +28,44 @@ def get_params(port):
     }
 
 def configure_alpine_router(port):
-    """Konfigūruoja AlpineRouter: įjungia IP forwarding ir priskiria IP adresus sąsajoms."""
-    print(f"\n[1/3] Konfigūruojamas AlpineRouter (Console: {port})...")
+    """Konfigūruoja AlpineRouter: įjungia forwarding ir priverstinai pakelia sąsajas."""
+    print(f"\n[ROUTER] Konfigūruojamas AlpineRouter...")
     try:
         with ConnectHandler(**get_params(port)) as tn:
             tn.write_channel("\n")
             time.sleep(1)
             cmds = [
-                # Įjungiam IP forwarding (maršrutizavimą)
+                # Įjungiam maršrutizavimą (Kritinė dalis!)
                 "sysctl -w net.ipv4.ip_forward=1",
                 "echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf",
-                # Pakeliam sąsajas
+                # Priverstinis sąsajų aktyvavimas
                 "ip link set eth0 up",
                 "ip link set eth1 up",
                 "ip link set eth2 up",
-                # Išvalom senus IP ir priskiriam naujus (GW adresai)
+                # IP adresų priskyrimas
                 "ip addr flush dev eth0",
                 "ip addr flush dev eth1",
                 "ip addr flush dev eth2",
-                "ip addr add 11.0.0.1/24 dev eth0", # Admin tinklas
-                "ip addr add 10.0.0.1/24 dev eth1", # Main tinklas
-                "ip addr add 10.1.0.1/24 dev eth2"  # Support tinklas
+                "ip addr add 11.0.0.1/24 dev eth0",
+                "ip addr add 10.0.0.1/24 dev eth1",
+                "ip addr add 10.1.0.1/24 dev eth2"
             ]
             for cmd in cmds:
                 tn.send_command(cmd, expect_string=r'[#$]')
-            print(">>> AlpineRouter paruoštas srauto perdavimui.")
+            print("OK: AlpineRouter dabar maršrutizuoja srautą.")
         return True
     except Exception as e:
-        print(f"!!! KLAIDA konfigūruojant Routerį: {e}")
+        print(f"KLAIDA Routeryje: {e}")
         return False
 
 def configure_ovs_logic(node_name, port):
-    """Konfigūruoja OVS: sukuria tiltą, prideda portus ir nustato valdymo IP."""
-    print(f"\n[2/3] Konfigūruojamas OVS Jungiklis: {node_name}...")
+    """Konfigūruoja OVS ir užtikrina, kad jis praleistų visą srautą."""
+    print(f"\n[OVS] Konfigūruojamas {node_name}...")
     try:
         with ConnectHandler(**get_params(port)) as tn:
             tn.write_channel("\n")
             time.sleep(1)
             
-            # Nustatom valdymo IP ir Gateway patiems switchams
             target_ip, target_gw = "", ""
             if node_name == "Admin": target_ip, target_gw = "11.0.0.100/24", "11.0.0.1"
             elif node_name == "Main1": target_ip, target_gw = "10.0.0.100/24", "10.0.0.1"
@@ -78,7 +76,6 @@ def configure_ovs_logic(node_name, port):
                 "ovs-vsctl add-br br-final",
                 "ovs-vsctl set-fail-mode br-final standalone"
             ]
-            # Pridedame fizinius eth portus prie OVS tilto
             for i in range(4):
                 setup_cmds.append(f"ovs-vsctl add-port br-final eth{i}")
                 setup_cmds.append(f"ip link set eth{i} up")
@@ -87,23 +84,22 @@ def configure_ovs_logic(node_name, port):
                 "ip link set br-final up",
                 "ip addr flush dev br-final",
                 f"ip addr add {target_ip} dev br-final",
-                f"ip route add default via {target_gw} || true",
-                # Leidžiame visą srautą (išvalom senus apribojimus)
+                # Išvalom srauto taisykles (Flows), kad niekas nebūtų blokuojama
                 "ovs-ofctl del-flows br-final",
-                "ovs-ofctl add-flow br-final action=normal"
+                "ovs-ofctl add-flow br-final action=normal",
+                f"ip route add default via {target_gw} || true"
             ]
-
             for cmd in setup_cmds:
                 tn.send_command(cmd, expect_string=r'[#$]')
-            print(f">>> {node_name} sukonfigūruotas (IP: {target_ip}).")
+            print(f"OK: {node_name} sukonfigūruotas.")
         return True
     except Exception as e:
-        print(f"!!! KLAIDA OVS {node_name}: {e}")
+        print(f"KLAIDA OVS: {e}")
         return False
 
 def configure_alpine_logic(name, port, ip, gw):
-    """Konfigūruoja galinį Alpine mazgą: IP ir maršrutas į Routerį."""
-    print(f"\n[3/3] Konfigūruojamas Mazgas: {name}...")
+    """Konfigūruoja galinius mazgus su švariu maršrutu."""
+    print(f"\n[NODE] Konfigūruojamas {name}...")
     try:
         with ConnectHandler(**get_params(port)) as tn:
             tn.write_channel("\n")
@@ -112,15 +108,16 @@ def configure_alpine_logic(name, port, ip, gw):
                 "ip link set eth0 up",
                 "ip addr flush dev eth0",
                 f"ip addr add {ip}/24 dev eth0",
+                # Išvalom senus maršrutus, kad nebūtų konfliktų
                 "ip route del default || true",
                 f"ip route add default via {gw}"
             ]
             for cmd in cmds:
                 tn.send_command(cmd, expect_string=r'[#$]')
-            print(f">>> {name} paruoštas (IP: {ip}, GW: {gw}).")
+            print(f"OK: {name} paruoštas.")
         return True
     except Exception as e:
-        print(f"!!! KLAIDA Alpine {name}: {e}")
+        print(f"KLAIDA Mazge: {e}")
         return False
 
 def main():
@@ -130,31 +127,26 @@ def main():
         project.get()
         project.get_nodes()
 
-        print("--- PRADEDAMA VISIŠKA TINKLO KONFIGŪRACIJA ---")
-
-        # 1. Konfigūruojame Routerį
+        # 1. Konfigūruojame Routerį pirmiausia
         for node in project.nodes:
             if node.name == "AlpineRouter" and node.status == "started":
                 configure_alpine_router(node.console)
 
-        # 2. Konfigūruojame OVS jungiklius
+        # 2. Konfigūruojame Jungiklius
         ovs_names = ["Main1", "Support", "Admin"]
         for node in project.nodes:
             if node.name in ovs_names and node.status == "started":
                 configure_ovs_logic(node.name, node.console)
 
-        # 3. Konfigūruojame galinius Alpine mazgus
+        # 3. Konfigūruojame Galinius mazgus
         for node in project.nodes:
             if node.name in IP_PLAN and node.status == "started":
                 ip, gw = IP_PLAN[node.name]
                 configure_alpine_logic(node.name, node.console, ip, gw)
 
-        print("\n--- KONFIGŪRACIJA BAIGTA SĖKMINGAI ---")
-        print("Testavimas: pabandykite 'ping 10.0.0.11' iš AlpineLinux-1 konsolės.")
-        
+        print("\nKonfigūracija baigta. Tikrinkite ping tarp tinklų.")
     except Exception as e:
-        print(f"\n!!! KRITINĖ KLAIDA: {e}")
-        sys.exit(1)
+        print(f"KRITINĖ KLAIDA: {e}")
 
 if __name__ == "__main__":
     main()
