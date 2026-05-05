@@ -1,8 +1,8 @@
 import os
 import time
 from gns3fy import Gns3Connector, Project
-# Netmiko paruošimas būsimoms SSH užduotims
-from netmiko import ConnectHandler 
+# Netmiko paruoštas būsimoms SSH operacijoms
+from netmiko import ConnectHandler
 
 def list_nodes(project):
     print("\n=== NODE LIST ===")
@@ -12,49 +12,52 @@ def list_nodes(project):
             f"Status: {node.status} | ID: {node.node_id}"
         )
 
-def wait_for_nodes_stop(project, timeout=60):
-    print("\n[INFO] Waiting for all nodes to stop...")
+def wait_for_nodes_to_start(project, timeout=60):
+    print("\n[INFO] Waiting for all nodes to start...")
     for _ in range(timeout):
         project.get_nodes()
-        if all(n.status == "stopped" for n in project.nodes):
-            print("[OK] All nodes have stopped")
+        if all(n.status == "started" for n in project.nodes):
+            print("[OK] All nodes are running")
             return True
         time.sleep(1)
-    print("[ERROR] Timeout waiting for nodes to stop")
+
+    print("[ERROR] Timeout waiting for nodes to start")
     return False
 
-def stop_all_nodes(project):
-    print("\n=== STOPPING ALL NODES ===")
+def start_all_nodes(project):
+    print("\n=== STARTING ALL NODES ===")
     for node in project.nodes:
-        if node.status != "stopped":
-            print(f"Stopping: {node.name}")
-            node.stop()
+        if node.status != "started":
+            print(f"Starting: {node.name}")
+            node.start()
         else:
-            print(f"Already stopped: {node.name}")
+            print(f"Already running: {node.name}")
 
 def main():
+    # Paimame URL iš Jenkins aplinkos kintamųjų
     gns3_url = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:80")
     project_name = "a"
 
     try:
         print(f"[INFO] Connecting to GNS3 at {gns3_url}")
         connector = Gns3Connector(url=gns3_url)
+
         project = Project(name=project_name, connector=connector)
         project.get()
         project.get_nodes()
 
         print(f"[OK] Connected to project: {project.name}")
-        
-        # Parodome esamą būseną
-        list_nodes(project)
 
-        # Atliekame stabdymą
-        stop_all_nodes(project)
+        # Paleidžiame visus mazgus
+        start_all_nodes(project)
 
-        if not wait_for_nodes_stop(project):
+        # Laukiame patvirtinimo
+        if not wait_for_nodes_to_start(project):
             return
 
-        print("\n[SUCCESS] All devices in topology are stopped")
+        # Parodome galutinį sąrašą
+        list_nodes(project)
+        print("\n[SUCCESS] Topology is fully running")
 
     except Exception as e:
         print(f"[ERROR] {e}")
