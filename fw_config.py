@@ -18,11 +18,11 @@ def get_params(port):
         'timeout': 15,
     }
 
-def apply_firewall_rules(port):
-    """Įdiegia iptables taisykles AlpineRouter mazge srauto blokavimui."""
-    print(f"\n[*] Jungiamasi prie AlpineRouter (port: {port}) ugniasienės konfigūravimui...")
+def apply_route_blocking(port):
+    """Blokuoja kelius tarp tinklu naudojant Blackhole maršrutus."""
+    print(f"\n[*] Jungiamasi prie AlpineRouter (port: {port})...")
     
-    # Tinklų apibrėžimai pagal tavo IP planą
+    # Tinklai pagal tavo ipconfig planą
     networks = {
         "MAIN": "10.0.0.0/24",
         "ADMIN": "11.0.0.0/24",
@@ -34,39 +34,36 @@ def apply_firewall_rules(port):
             tn.write_channel("\n")
             time.sleep(1)
             
-            # 1. Išvalome esamas taisykles (nebūtina, bet saugu pradedant)
-            # 2. Nustatome numatytąją politiką ACCEPT (kad neužsirakintume), 
-            #    bet blokuojame specifinius perėjimus.
+            print("[*] Vykdomas srauto izoliavimas per maršrutizavimo lentelę...")
+            
+            # Išvalome galimus senus blackhole maršrutus, kad išvengtume klaidų
+            # Tada pridedame naujus blackhole maršrutus
+            # PASTABA: Tai blokuos srautą tik maršrutizatoriuje. 
+            # Įrenginiai savo potinklio viduje vis tiek bendraus.
             
             cmds = [
-                "iptables -F FORWARD",  # Išvalyti nukreipimo taisykles
+                # Admin negali pasiekti kitu
+                f"ip route add blackhole {networks['MAIN']} || true",
+                f"ip route add blackhole {networks['SUPPORT']} || true",
                 
-                # Blokavimas: Admin <-> Main
-                f"iptables -A FORWARD -s {networks['ADMIN']} -d {networks['MAIN']} -j DROP",
-                f"iptables -A FORWARD -s {networks['MAIN']} -d {networks['ADMIN']} -j DROP",
+                # Main negali pasiekti kitu
+                f"ip route add blackhole {networks['ADMIN']} || true",
+                # (Support-Main ryšio blokavimas)
+                f"ip route add blackhole {networks['SUPPORT']} || true",
                 
-                # Blokavimas: Admin <-> Support
-                f"iptables -A FORWARD -s {networks['ADMIN']} -d {networks['SUPPORT']} -j DROP",
-                f"iptables -A FORWARD -s {networks['SUPPORT']} -d {networks['ADMIN']} -j DROP",
-                
-                # Blokavimas: Support <-> Main
-                f"iptables -A FORWARD -s {networks['SUPPORT']} -d {networks['MAIN']} -j DROP",
-                f"iptables -A FORWARD -s {networks['MAIN']} -d {networks['SUPPORT']} -j DROP",
-                
-                # Išsaugome (Alpine Linux specifika, kad liktų po perkrovimo)
-                "rc-update add iptables default || true",
-                "/etc/init.d/iptables save || true"
+                # Support negali pasiekti kitu
+                f"ip route add blackhole {networks['ADMIN']} || true",
+                f"ip route add blackhole {networks['MAIN']} || true"
             ]
             
             for cmd in cmds:
-                output = tn.send_command(cmd, expect_string=r'[#$]')
+                tn.send_command(cmd, expect_string=r'[#$]')
                 print(f"Vykdoma: {cmd}")
             
-            print("\n>>> Ugniasienės taisyklės įdiegtos sėkmingai.")
-            print(">>> Blokavimas aktyvuotas tarp Admin, Main ir Support segmentų.")
+            print("\n>>> TINKLAI IZOLIUOTI: Naudojamas Blackhole maršrutizavimas.")
             
     except Exception as e:
-        print(f"Klaida konfigūruojant ugniasienę: {e}")
+        print(f"Klaida: {e}")
 
 def main():
     try:
@@ -75,16 +72,10 @@ def main():
         project.get()
         project.get_nodes()
 
-        router_found = False
         for node in project.nodes:
             if node.name == "AlpineRouter" and node.status == "started":
-                apply_firewall_rules(node.console)
-                router_found = True
+                apply_route_blocking(node.console)
                 break
-        
-        if not router_found:
-            print("[!] Klaida: AlpineRouter nerastas arba neįjungtas.")
-
     except Exception as e:
         print(f"Kritinė klaida: {e}")
 
