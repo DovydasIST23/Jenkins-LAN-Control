@@ -37,7 +37,8 @@ def main():
 
     try:
         print(f"[INFO] Connecting to GNS3 at {gns3_url}")
-        connector = Gns3Connector(url=gns3_url, timeout=15)
+        # Pašalintas timeout argumentas, kuris sukėlė klaidą
+        connector = Gns3Connector(url=gns3_url)
 
         project = Project(name=project_name, connector=connector)
         project.get()
