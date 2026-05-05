@@ -3,8 +3,12 @@ import time
 from gns3fy import Gns3Connector, Project
 from netmiko import ConnectHandler
 
+# --- KONFIGURACIJA ---
 GNS3_IP = "192.168.56.102"
 PROJECT_NAME = "a"
+
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
 
 def get_params(port):
     return {
@@ -14,48 +18,55 @@ def get_params(port):
         'timeout': 15,
     }
 
-def configure_firewall(node_name, port):
-    """Nustato OpenFlow taisykles srauto kontrolei."""
-    print(f"\n[FIREWALL] Konfigūruojamas {node_name} saugumas...")
+def apply_firewall_rules(port):
+    """Įdiegia iptables taisykles AlpineRouter mazge srauto blokavimui."""
+    print(f"\n[*] Jungiamasi prie AlpineRouter (port: {port}) ugniasienės konfigūravimui...")
     
-    # IP adresų priskyrimas identifikavimui taisyklėse
-    ADMIN_NET = "11.0.0.0/24"
-    MAIN_NET = "10.0.0.0/24"
-    SUPPORT_NET = "10.1.0.0/24"
-
-    cmds = []
-    # 1. Išvalome senas taisykles
-    cmds.append("ovs-ofctl del-flows br-final")
-    
-    # 2. Standartinis leidimas ARP srautui (būtinas, kad veiktų tinklas)
-    cmds.append("ovs-ofctl add-flow br-final priority=100,arp,action=normal")
-
-    if node_name == "Admin":
-        # Admin leidžia viską į Main ir Support (ir atgal)
-        cmds.append(f"ovs-ofctl add-flow br-final priority=50,ip,nw_dst={MAIN_NET},action=normal")
-        cmds.append(f"ovs-ofctl add-flow br-final priority=50,ip,nw_dst={SUPPORT_NET},action=normal")
-        cmds.append("ovs-ofctl add-flow br-final priority=10,ip,action=drop") # Viskas kita - drop
-
-    elif node_name == "Main1":
-        # Main leidžia atsakymus tik į Admin. Į Support - blokuoja.
-        cmds.append(f"ovs-ofctl add-flow br-final priority=50,ip,nw_dst={ADMIN_NET},action=normal")
-        cmds.append(f"ovs-ofctl add-flow br-final priority=40,ip,nw_dst={SUPPORT_NET},action=drop")
-        cmds.append("ovs-ofctl add-flow br-final priority=10,ip,action=drop")
-
-    elif node_name == "Support":
-        # Support leidžia į Main ir Admin.
-        cmds.append(f"ovs-ofctl add-flow br-final priority=50,ip,nw_dst={MAIN_NET},action=normal")
-        cmds.append(f"ovs-ofctl add-flow br-final priority=50,ip,nw_dst={ADMIN_NET},action=normal")
-        cmds.append("ovs-ofctl add-flow br-final priority=10,ip,action=drop")
+    # Tinklų apibrėžimai pagal tavo IP planą
+    networks = {
+        "MAIN": "10.0.0.0/24",
+        "ADMIN": "11.0.0.0/24",
+        "SUPPORT": "10.1.0.0/24"
+    }
 
     try:
         with ConnectHandler(**get_params(port)) as tn:
             tn.write_channel("\n")
+            time.sleep(1)
+            
+            # 1. Išvalome esamas taisykles (nebūtina, bet saugu pradedant)
+            # 2. Nustatome numatytąją politiką ACCEPT (kad neužsirakintume), 
+            #    bet blokuojame specifinius perėjimus.
+            
+            cmds = [
+                "iptables -F FORWARD",  # Išvalyti nukreipimo taisykles
+                
+                # Blokavimas: Admin <-> Main
+                f"iptables -A FORWARD -s {networks['ADMIN']} -d {networks['MAIN']} -j DROP",
+                f"iptables -A FORWARD -s {networks['MAIN']} -d {networks['ADMIN']} -j DROP",
+                
+                # Blokavimas: Admin <-> Support
+                f"iptables -A FORWARD -s {networks['ADMIN']} -d {networks['SUPPORT']} -j DROP",
+                f"iptables -A FORWARD -s {networks['SUPPORT']} -d {networks['ADMIN']} -j DROP",
+                
+                # Blokavimas: Support <-> Main
+                f"iptables -A FORWARD -s {networks['SUPPORT']} -d {networks['MAIN']} -j DROP",
+                f"iptables -A FORWARD -s {networks['MAIN']} -d {networks['SUPPORT']} -j DROP",
+                
+                # Išsaugome (Alpine Linux specifika, kad liktų po perkrovimo)
+                "rc-update add iptables default || true",
+                "/etc/init.d/iptables save || true"
+            ]
+            
             for cmd in cmds:
-                tn.send_command(cmd, expect_string=r'[#$]')
-        print(f"OK: {node_name} firewall sukonfigūruotas.")
+                output = tn.send_command(cmd, expect_string=r'[#$]')
+                print(f"Vykdoma: {cmd}")
+            
+            print("\n>>> Ugniasienės taisyklės įdiegtos sėkmingai.")
+            print(">>> Blokavimas aktyvuotas tarp Admin, Main ir Support segmentų.")
+            
     except Exception as e:
-        print(f"KLAIDA {node_name}: {e}")
+        print(f"Klaida konfigūruojant ugniasienę: {e}")
 
 def main():
     try:
@@ -64,15 +75,18 @@ def main():
         project.get()
         project.get_nodes()
 
-        ovs_names = ["Main1", "Support", "Admin"]
+        router_found = False
         for node in project.nodes:
-            if node.name in ovs_names and node.status == "started":
-                configure_firewall(node.name, node.console)
+            if node.name == "AlpineRouter" and node.status == "started":
+                apply_firewall_rules(node.console)
+                router_found = True
+                break
+        
+        if not router_found:
+            print("[!] Klaida: AlpineRouter nerastas arba neįjungtas.")
 
-        print("\nSaugumo konfigūracija baigta.")
     except Exception as e:
-        print(f"KRITINĖ KLAIDA: {e}")
-        sys.exit(1)
+        print(f"Kritinė klaida: {e}")
 
 if __name__ == "__main__":
     main()
