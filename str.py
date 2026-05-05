@@ -2,43 +2,64 @@ import os
 import time
 import sys
 from gns3fy import Gns3Connector, Project
+# Pakeista iš paramiko į netmiko
+from netmiko import ConnectHandler 
+
+def list_nodes(project):
+    print("\n=== NODE LIST ===")
+    for node in project.nodes:
+        print(
+            f"{node.name} | Type: {node.node_type} | "
+            f"Status: {node.status} | ID: {node.node_id}"
+        )
+
+def wait_for_nodes(project, timeout=60):
+    print("\n[INFO] Waiting for all nodes to start...")
+    for _ in range(timeout):
+        project.get_nodes()
+        if all(n.status == "started" for n in project.nodes):
+            print("[OK] All nodes are running")
+            return True
+        time.sleep(1)
+    print("[ERROR] Timeout waiting for nodes")
+    return False
+
+def start_all_nodes(project):
+    print("\n=== STARTING ALL NODES ===")
+    for node in project.nodes:
+        if node.status != "started":
+            print(f"Starting: {node.name}")
+            node.start()
+        else:
+            print(f"Already running: {node.name}")
 
 def main():
-    # Paimame nustatymus
+    # Naudojame aplinkos kintamąjį arba numatytąjį URL
     gns3_url = os.environ.get("GNS3_SERVER_URL", "http://192.168.56.102:80")
     project_name = "a"
 
     try:
-        print(f"[INFO] Jungiamasi prie GNS3: {gns3_url}")
-        # timeout=15 užtikrina, kad skriptas nenueis į begalinį laukimą
-        connector = Gns3Connector(url=gns3_url, timeout=15)
-        
+        print(f"[INFO] Connecting to GNS3 at {gns3_url}")
+        connector = Gns3Connector(url=gns3_url)
+
         project = Project(name=project_name, connector=connector)
         project.get()
         project.get_nodes()
 
-        print(f"[OK] Projektas rastas: {project.name}")
+        print(f"[OK] Connected to project: {project.name}")
 
-        # Įjungiame visus mazgus
-        for node in project.nodes:
-            if node.status != "started":
-                print(f"[+] Paleidžiamas mazgas: {node.name}")
-                node.start()
-            else:
-                print(f"[!] Mazgas jau veikia: {node.name}")
+        list_nodes(project)
 
-        # Palaukiame 5 sek. kol GNS3 atnaujins statusus ir parodome sąrašą
-        time.sleep(5)
-        project.get_nodes()
-        
-        print("\n=== GALUTINĖ MAZGŲ BŪSENA ===")
-        for n in project.nodes:
-            print(f"Mazgas: {n.name} | Statusas: {n.status}")
+        # Paleidžiame įrenginius
+        start_all_nodes(project)
 
-        print("\n[SUCCESS] Skriptas baigė darbą sėkmingai.")
+        if not wait_for_nodes(project):
+            sys.exit(1) # Pranešame Jenkins apie klaidą
+
+        print("\n[SUCCESS] Topology is fully running")
 
     except Exception as e:
-        print(f"[ERROR] Klaida: {e}")
+        print(f"[ERROR] {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
